@@ -1,3 +1,4 @@
+use crate::bundled;
 use crate::models::{AgentsRepo, RepoImportPlan, RepoImportResult, ScriptPlan, ScriptResult};
 use crate::repo;
 use std::{
@@ -16,8 +17,8 @@ pub fn plan_action(repo: &AgentsRepo, action: &str) -> Result<ScriptPlan, String
             action,
             "Dry Run MCPs",
             repo,
-            "node",
-            vec!["./scripts/sync-mcps.mjs", "--dry-run"],
+            "bundled:sync-mcps.mjs",
+            vec!["--registry", &repo.paths.registry, "--dry-run"],
             vec![
                 path_join(&repo.codex_home, &["config.toml"]),
                 path_join(&repo.home, &[".config", "opencode", "opencode.json"]),
@@ -30,8 +31,8 @@ pub fn plan_action(repo: &AgentsRepo, action: &str) -> Result<ScriptPlan, String
             action,
             "Sync MCPs",
             repo,
-            "node",
-            vec!["./scripts/sync-mcps.mjs"],
+            "bundled:sync-mcps.mjs",
+            vec!["--registry", &repo.paths.registry],
             vec![
                 path_join(&repo.codex_home, &["config.toml"]),
                 path_join(&repo.home, &[".config", "opencode", "opencode.json"]),
@@ -45,7 +46,7 @@ pub fn plan_action(repo: &AgentsRepo, action: &str) -> Result<ScriptPlan, String
             "Run Link Script",
             repo,
             &script_name(repo, "link-agents"),
-            vec![],
+            vec!["--repo-root", &repo.root],
             shared,
             true,
             "Links global instructions, skills, commands, and the GitHub Copilot CLI env snippet.",
@@ -55,7 +56,7 @@ pub fn plan_action(repo: &AgentsRepo, action: &str) -> Result<ScriptPlan, String
             "Dry Run All",
             repo,
             &script_name(repo, "sync-all-agents"),
-            vec!["--dry-run-mcps"],
+            vec!["--repo-root", &repo.root, "--dry-run-mcps"],
             append_paths(shared, repo),
             true,
             "Current script support only dry-runs the MCP portion. Link and package steps still run inside sync-all-agents.",
@@ -65,7 +66,7 @@ pub fn plan_action(repo: &AgentsRepo, action: &str) -> Result<ScriptPlan, String
             "Sync All",
             repo,
             &script_name(repo, "sync-all-agents"),
-            vec!["--with-mcps"],
+            vec!["--repo-root", &repo.root, "--with-mcps"],
             append_paths(shared, repo),
             true,
             "Runs the repo orchestrator, including linking, packaging, and MCP sync.",
@@ -74,8 +75,8 @@ pub fn plan_action(repo: &AgentsRepo, action: &str) -> Result<ScriptPlan, String
             action,
             "Sync Tool: Claude Code",
             repo,
-            "node",
-            vec!["./scripts/sync-mcps.mjs", "--target", "claude-code"],
+            "bundled:sync-mcps.mjs",
+            vec!["--registry", &repo.paths.registry, "--target", "claude-code"],
             vec![path_join(&repo.home, &[".claude"])],
             false,
             "Uses the Claude Code CLI for repo-managed MCP entries.",
@@ -84,8 +85,8 @@ pub fn plan_action(repo: &AgentsRepo, action: &str) -> Result<ScriptPlan, String
             action,
             "Sync Tool: Codex",
             repo,
-            "node",
-            vec!["./scripts/sync-mcps.mjs", "--target", "codex"],
+            "bundled:sync-mcps.mjs",
+            vec!["--registry", &repo.paths.registry, "--target", "codex"],
             vec![path_join(&repo.codex_home, &["config.toml"])],
             true,
             "Updates repo-managed Codex MCP tables and preserves unrelated Codex settings.",
@@ -94,8 +95,8 @@ pub fn plan_action(repo: &AgentsRepo, action: &str) -> Result<ScriptPlan, String
             action,
             "Sync Tool: OpenCode",
             repo,
-            "node",
-            vec!["./scripts/sync-mcps.mjs", "--target", "opencode"],
+            "bundled:sync-mcps.mjs",
+            vec!["--registry", &repo.paths.registry, "--target", "opencode"],
             vec![path_join(&repo.home, &[".config", "opencode", "opencode.json"])],
             true,
             "Updates repo-managed OpenCode MCP entries and preserves unrelated OpenCode settings.",
@@ -108,6 +109,7 @@ pub fn plan_action(repo: &AgentsRepo, action: &str) -> Result<ScriptPlan, String
 pub fn run_plan(plan: &ScriptPlan) -> Result<ScriptResult, String> {
     let mut command = resolve_command(plan)?;
     command.current_dir(&plan.cwd);
+    command.env("PORTABLE_AGENTS_REPO_ROOT", &plan.cwd);
     let output = command.output().map_err(|error| error.to_string())?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -433,6 +435,27 @@ fn powershell_quote(value: &str) -> String {
 }
 
 fn resolve_command(plan: &ScriptPlan) -> Result<Command, String> {
+    if let Some(script_name) = bundled::display_name(&plan.command) {
+        if !bundled::bundled_script_exists(script_name) {
+            return Err(format!("Bundled script not found: {script_name}"));
+        }
+        let script_path = bundled::script_path(script_name)?;
+        if script_name.ends_with(".mjs") {
+            let mut command = Command::new("node");
+            command.arg(script_path);
+            command.args(&plan.args);
+            return Ok(command);
+        }
+        if script_name.ends_with(".ps1") {
+            let mut command = Command::new("powershell.exe");
+            command.args(["-ExecutionPolicy", "Bypass", "-File", &bundled::display_path(script_path)]);
+            command.args(&plan.args);
+            return Ok(command);
+        }
+        let mut command = Command::new(script_path);
+        command.args(&plan.args);
+        return Ok(command);
+    }
     if plan.command == "node" {
         let mut command = Command::new("node");
         command.args(&plan.args);
@@ -454,14 +477,11 @@ fn resolve_command(plan: &ScriptPlan) -> Result<Command, String> {
     Ok(command)
 }
 
-fn script_name(repo: &AgentsRepo, base: &str) -> String {
+fn script_name(_repo: &AgentsRepo, base: &str) -> String {
     if cfg!(windows) {
-        let ps1 = Path::new(&repo.paths.scripts).join(format!("{base}.ps1"));
-        if ps1.exists() {
-            return format!("./scripts/{base}.ps1");
-        }
+        return format!("bundled:{base}.ps1");
     }
-    format!("./scripts/{base}.sh")
+    format!("bundled:{base}.sh")
 }
 
 fn affected_shared(repo: &AgentsRepo) -> Vec<String> {
@@ -489,7 +509,7 @@ fn path_join(base: &str, segments: &[&str]) -> String {
 }
 
 fn shell_command(command: &str, args: &[String]) -> String {
-    std::iter::once(command.to_string())
+    std::iter::once(bundled::bundled_command_label(command))
         .chain(args.iter().cloned())
         .map(|value| shell_arg(&value))
         .collect::<Vec<_>>()

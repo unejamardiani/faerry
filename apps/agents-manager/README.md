@@ -6,7 +6,7 @@ The app keeps the repository as the source of truth:
 
 - React/TypeScript renders the desktop UI.
 - Rust performs read-only status detection and script planning.
-- Existing repo scripts perform all writes/apply actions.
+- Bundled copies of the portable-agents scripts perform write/apply actions.
 - No database and no local browser server in the packaged app.
 
 ## Install
@@ -45,15 +45,17 @@ Before running any action, the GUI shows:
 - whether backups may be created
 - a diff preview where the app can compute one safely
 
-Supported actions delegate to:
+Supported actions delegate to scripts bundled inside the app:
 
-- `./scripts/link-agents.sh` or `scripts/link-agents.ps1`
-- `./scripts/sync-all-agents.sh --dry-run-mcps` or PowerShell equivalent
-- `./scripts/sync-all-agents.sh --with-mcps` or PowerShell equivalent
-- `node ./scripts/sync-mcps.mjs --dry-run`
-- `node ./scripts/sync-mcps.mjs --target claude-code`
-- `node ./scripts/sync-mcps.mjs --target codex`
-- `node ./scripts/sync-mcps.mjs --target opencode`
+- `link-agents.sh` / `link-agents.ps1`
+- `sync-all-agents.sh --dry-run-mcps` / PowerShell equivalent
+- `sync-all-agents.sh --with-mcps` / PowerShell equivalent
+- `sync-mcps.mjs --dry-run`
+- `sync-mcps.mjs --target claude-code`
+- `sync-mcps.mjs --target codex`
+- `sync-mcps.mjs --target opencode`
+
+The selected source-of-truth repo no longer needs to contain a `scripts/` folder for app-driven sync. Keeping repo-local scripts is still useful for CLI workflows.
 
 Diff preview currently covers:
 

@@ -53,7 +53,7 @@ pub fn detect_repo_with_override(repo_override: Option<String>) -> Result<Agents
         return Ok(make_repo(home_repo, home));
     }
 
-    Err(RepoError("No portable agents repo found. Set AGENTS_REPO or run from inside a repo containing AGENTS.md, skills, commands, mcp/servers.json, and scripts.".into()))
+    Err(RepoError("No portable agents repo found. Set AGENTS_REPO or run from inside a repo containing AGENTS.md, skills, commands, and mcp/servers.json.".into()))
 }
 
 pub fn read_text(path: impl AsRef<Path>) -> Option<String> {
@@ -180,7 +180,7 @@ fn expand_home(value: &str, home: &Path) -> PathBuf {
 }
 
 fn is_repo(candidate: &Path) -> bool {
-    ["AGENTS.md", "skills", "commands", "mcp/servers.json", "scripts"]
+    ["AGENTS.md", "skills", "commands", "mcp/servers.json"]
         .iter()
         .all(|entry| candidate.join(entry).exists())
 }

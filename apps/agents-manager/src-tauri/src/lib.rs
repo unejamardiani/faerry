@@ -1,3 +1,4 @@
+mod bundled;
 mod models;
 mod preview;
 mod repo;

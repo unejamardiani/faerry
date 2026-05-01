@@ -1,4 +1,5 @@
 use crate::{
+    bundled,
     models::{AgentsRepo, DiffPreview, DiffSection},
     repo, scripts,
 };
@@ -251,11 +252,27 @@ fn target_enabled(server: &RegistryServer, target: &str) -> bool {
 }
 
 fn claude_mcp_dry_run_section(repo: &AgentsRepo, action: &str) -> DiffSection {
-    let mut args = vec!["./scripts/sync-mcps.mjs", "--dry-run"];
+    let script_path = match bundled::script_path("sync-mcps.mjs") {
+        Ok(path) => path,
+        Err(error) => {
+            return DiffSection {
+                title: "Claude Code MCP dry-run".into(),
+                path: "claude mcp".into(),
+                section_type: "command-output".into(),
+                status: "error".into(),
+                diff: error,
+            }
+        }
+    };
+    let mut command = Command::new("node");
+    command.arg(script_path);
+    command.args(["--registry", &repo.paths.registry, "--dry-run"]);
     if action == "syncClaudeCode" {
-        args.extend(["--target", "claude-code"]);
+        command.args(["--target", "claude-code"]);
     }
-    let output = Command::new("node").args(args).current_dir(&repo.root).output();
+    command.current_dir(&repo.root);
+    command.env("PORTABLE_AGENTS_REPO_ROOT", &repo.root);
+    let output = command.output();
     match output {
         Ok(output) => {
             let text = format!(
