@@ -91,6 +91,13 @@ pub fn display_name(command: &str) -> Option<&str> {
     command.strip_prefix("bundled:")
 }
 
+pub fn get_script_content(name: &str) -> String {
+    SCRIPTS.iter()
+        .find(|s| s.name == name)
+        .map(|s| s.content.to_string())
+        .unwrap_or_default()
+}
+
 fn patched_content(name: &str, content: &str) -> String {
     match name {
         "sync-all-agents.sh" => content

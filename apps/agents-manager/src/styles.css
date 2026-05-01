@@ -318,7 +318,7 @@ th {
 .modal {
   display: flex;
   max-height: calc(100vh - 48px);
-  width: min(760px, calc(100vw - 48px));
+  width: min(1200px, calc(100vw - 48px));
   flex-direction: column;
   box-shadow: 0 16px 50px rgba(25, 34, 45, 0.18);
 }
@@ -427,4 +427,125 @@ th {
   background: #fdecea;
   color: var(--danger);
   font-size: 14px;
+}
+
+.successBox {
+  border: 1px solid #a8d5b5;
+  border-radius: 7px;
+  padding: 10px 12px;
+  background: #edf7f1;
+  color: var(--ok);
+  font-size: 14px;
+}
+
+.logList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.logEntry {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.logEntry > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  list-style: none;
+  background: var(--surface-soft);
+}
+
+.logEntry > summary::-webkit-details-marker {
+  display: none;
+}
+
+.logEntry[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.logAction {
+  flex: 1;
+  font-weight: 600;
+}
+
+.logTime {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.logBody {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+}
+
+.logOutput {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 10px;
+  font-size: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.warningList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.warningItem {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--warn);
+  font-size: 14px;
+}
+
+.warningItem:last-child {
+  border-bottom: none;
+}
+
+.aboutGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 14px 16px;
+}
+
+.aboutGrid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 16px 10px;
+}
+
+.fieldDiff {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 10px;
+  font-size: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
 }

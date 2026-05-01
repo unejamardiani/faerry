@@ -122,6 +122,15 @@ pub fn run_plan(plan: &ScriptPlan) -> Result<ScriptResult, String> {
     })
 }
 
+pub fn command_available(command: &str) -> bool {
+    let result = if cfg!(windows) {
+        Command::new("where").arg(command).output()
+    } else {
+        Command::new("sh").args(["-c", &format!("command -v {}", command)]).output()
+    };
+    result.map(|output| output.status.success()).unwrap_or(false)
+}
+
 pub fn open_path(target: &str) -> Result<(), String> {
     if target.trim().is_empty() {
         return Err("Path is empty.".into());

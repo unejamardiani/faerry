@@ -415,6 +415,8 @@ fn mcp_status(tool: &str, server: &str, status: &str, path: &str, message: &str)
         status: status.into(),
         path: path.into(),
         message: message.into(),
+        auth_status: None,
+        auth_command: None,
     }
 }
 
