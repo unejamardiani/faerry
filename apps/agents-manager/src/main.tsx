@@ -113,6 +113,20 @@ type RepoImportResult = {
   stderr: string;
 };
 
+type DiffPreview = {
+  action: string;
+  title: string;
+  sections: DiffSection[];
+};
+
+type DiffSection = {
+  title: string;
+  path: string;
+  sectionType: string;
+  status: string;
+  diff: string;
+};
+
 const views = ["Dashboard", "Skills", "Commands", "MCP Servers", "Tools"] as const;
 type View = (typeof views)[number];
 
@@ -130,6 +144,7 @@ function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [view, setView] = useState<View>("Dashboard");
   const [plan, setPlan] = useState<ScriptPlan | null>(null);
+  const [preview, setPreview] = useState<DiffPreview | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [output, setOutput] = useState("No command has run yet.");
   const [meta, setMeta] = useState("Ready.");
@@ -154,8 +169,15 @@ function App() {
 
   async function reviewAction(action: string) {
     try {
-      setPlan(await invoke<ScriptPlan>("plan_action", { action, repoPath: repoPath || null }));
+      const [nextPlan, nextPreview] = await Promise.all([
+        invoke<ScriptPlan>("plan_action", { action, repoPath: repoPath || null }),
+        invoke<DiffPreview>("preview_action", { action, repoPath: repoPath || null }),
+      ]);
+      setPlan(nextPlan);
+      setPreview(nextPreview);
     } catch (error) {
+      setPlan(null);
+      setPreview(null);
       setOutput(String(error));
       setMeta("Unable to plan command.");
     }
@@ -163,6 +185,7 @@ function App() {
 
   async function runAction(action: string) {
     setPlan(null);
+    setPreview(null);
     setMeta(`Running ${action}...`);
     setOutput("Running...");
     try {
@@ -300,7 +323,17 @@ function App() {
         </section>
       </main>
 
-      {plan && <PlanDialog plan={plan} onCancel={() => setPlan(null)} onRun={() => runAction(plan.action)} />}
+      {plan && (
+        <PlanDialog
+          plan={plan}
+          preview={preview}
+          onCancel={() => {
+            setPlan(null);
+            setPreview(null);
+          }}
+          onRun={() => runAction(plan.action)}
+        />
+      )}
       {importOpen && (
         <ImportDialog
           defaultDestination={state?.repo?.home ? `${state.repo.home}/agents-import` : "~/.agents-import"}
@@ -527,7 +560,17 @@ function Tools({ state, onAction, openPath }: { state: AppState; onAction: (acti
   );
 }
 
-function PlanDialog({ plan, onCancel, onRun }: { plan: ScriptPlan; onCancel: () => void; onRun: () => void }) {
+function PlanDialog({
+  plan,
+  preview,
+  onCancel,
+  onRun,
+}: {
+  plan: ScriptPlan;
+  preview: DiffPreview | null;
+  onCancel: () => void;
+  onRun: () => void;
+}) {
   return (
     <div className="modalBackdrop">
       <div className="modal">
@@ -547,6 +590,24 @@ function PlanDialog({ plan, onCancel, onRun }: { plan: ScriptPlan; onCancel: () 
             {plan.backupsMayBeCreated ? "Backups may be created by the underlying repo script." : "No backups should be created for this dry-run action."}
           </Field>
           <Field label="Note">{plan.note}</Field>
+          <Field label="Preview">
+            {preview ? (
+              <div className="previewStack">
+                {preview.sections.map((section) => (
+                  <details className="previewSection" key={`${section.title}-${section.path}`} open={section.status === "changed" || section.status === "error"}>
+                    <summary>
+                      <span>{section.title}</span>
+                      <StatusPill value={section.status} />
+                    </summary>
+                    <div className="path">{section.path}</div>
+                    <pre className="diffBox">{section.diff}</pre>
+                  </details>
+                ))}
+              </div>
+            ) : (
+              <div className="path">Preview unavailable.</div>
+            )}
+          </Field>
         </div>
         <div className="modalActions">
           <button className="ghostButton" onClick={onCancel}>Cancel</button>

@@ -312,21 +312,29 @@ th {
   place-items: center;
   padding: 24px;
   background: rgba(13, 19, 27, 0.45);
+  overflow: hidden;
 }
 
 .modal {
+  display: flex;
+  max-height: calc(100vh - 48px);
   width: min(760px, calc(100vw - 48px));
+  flex-direction: column;
   box-shadow: 0 16px 50px rgba(25, 34, 45, 0.18);
 }
 
 .modalBody {
   display: grid;
+  min-height: 0;
+  overflow: auto;
   gap: 14px;
   padding: 16px;
+  overscroll-behavior: contain;
 }
 
 .modalActions {
   display: flex;
+  flex: 0 0 auto;
   justify-content: flex-end;
   gap: 8px;
   padding: 16px;
@@ -345,6 +353,45 @@ th {
   padding: 12px;
   background: #111820;
   color: #e9f1f7;
+}
+
+.diffBox {
+  max-height: min(42vh, 420px);
+  margin: 8px 0 0;
+  overflow: auto;
+  border-radius: 7px;
+  padding: 12px;
+  background: #111820;
+  color: #e9f1f7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.previewStack {
+  display: grid;
+  max-height: 52vh;
+  overflow: auto;
+  gap: 10px;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+}
+
+.previewSection {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 10px 12px;
+  background: #fbfcfd;
+}
+
+.previewSection summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  font-weight: 700;
 }
 
 .hintGrid {

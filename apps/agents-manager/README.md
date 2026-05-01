@@ -43,6 +43,7 @@ Before running any action, the GUI shows:
 - working directory
 - likely affected paths
 - whether backups may be created
+- a diff preview where the app can compute one safely
 
 Supported actions delegate to:
 
@@ -53,6 +54,14 @@ Supported actions delegate to:
 - `node ./scripts/sync-mcps.mjs --target claude-code`
 - `node ./scripts/sync-mcps.mjs --target codex`
 - `node ./scripts/sync-mcps.mjs --target opencode`
+
+Diff preview currently covers:
+
+- symlink targets for global instructions, skills, commands, and shared `.agents` links
+- GitHub Copilot CLI env snippet
+- Codex MCP config text
+- OpenCode MCP config JSON
+- Claude Code MCP dry-run output through the existing script
 
 ## Repo Import
 

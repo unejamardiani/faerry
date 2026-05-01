@@ -1,9 +1,10 @@
 mod models;
+mod preview;
 mod repo;
 mod scripts;
 mod status;
 
-use models::{AppState, RepoImportPlan, RepoImportResult, ScriptPlan, ScriptResult};
+use models::{AppState, DiffPreview, RepoImportPlan, RepoImportResult, ScriptPlan, ScriptResult};
 
 #[tauri::command]
 fn get_state(repo_path: Option<String>) -> Result<AppState, String> {
@@ -21,6 +22,12 @@ async fn run_action(action: String, repo_path: Option<String>) -> Result<ScriptR
     let repo = repo::detect_repo_with_override(repo_path).map_err(|error| error.to_string())?;
     let plan = scripts::plan_action(&repo, &action)?;
     scripts::run_plan(&plan)
+}
+
+#[tauri::command]
+fn preview_action(action: String, repo_path: Option<String>) -> Result<DiffPreview, String> {
+    let repo = repo::detect_repo_with_override(repo_path).map_err(|error| error.to_string())?;
+    preview::preview_action(&repo, &action)
 }
 
 #[tauri::command]
@@ -49,6 +56,7 @@ pub fn run() {
             get_state,
             plan_action,
             run_action,
+            preview_action,
             choose_repo_path,
             plan_repo_import,
             run_repo_import,

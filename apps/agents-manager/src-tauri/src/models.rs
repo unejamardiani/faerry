@@ -151,3 +151,21 @@ pub struct RepoImportResult {
     pub stdout: String,
     pub stderr: String,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffPreview {
+    pub action: String,
+    pub title: String,
+    pub sections: Vec<DiffSection>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffSection {
+    pub title: String,
+    pub path: String,
+    pub section_type: String,
+    pub status: String,
+    pub diff: String,
+}
