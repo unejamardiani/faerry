@@ -1,0 +1,67 @@
+# Portable Agents Manager
+
+Tauri desktop GUI for managing a portable `.agents` repository.
+
+The app keeps the repository as the source of truth:
+
+- React/TypeScript renders the desktop UI.
+- Rust performs read-only status detection and script planning.
+- Existing repo scripts perform all writes/apply actions.
+- No database and no local browser server in the packaged app.
+
+## Install
+
+```bash
+npm install
+```
+
+Rust is required for Tauri development.
+
+## Run
+
+```bash
+npm run dev
+```
+
+## Verify
+
+```bash
+npm run check
+```
+
+Build the packaged app with:
+
+```bash
+npm run build
+```
+
+## Apply Model
+
+Before running any action, the GUI shows:
+
+- command to run
+- working directory
+- likely affected paths
+- whether backups may be created
+
+Supported actions delegate to:
+
+- `./scripts/link-agents.sh` or `scripts/link-agents.ps1`
+- `./scripts/sync-all-agents.sh --dry-run-mcps` or PowerShell equivalent
+- `./scripts/sync-all-agents.sh --with-mcps` or PowerShell equivalent
+- `node ./scripts/sync-mcps.mjs --dry-run`
+- `node ./scripts/sync-mcps.mjs --target claude-code`
+- `node ./scripts/sync-mcps.mjs --target codex`
+- `node ./scripts/sync-mcps.mjs --target opencode`
+
+## Repo Import
+
+Use **Clone / Import** in the top bar to add another portable agents repo.
+
+Supported sources:
+
+- Git URLs, for example `https://github.com/example/agents.git`
+- ZIP URLs, for example a GitHub `archive/refs/heads/main.zip`
+- Local `.zip` files
+
+The destination path must not already exist. After a successful import, the app switches to the imported repo as the selected source of truth.
