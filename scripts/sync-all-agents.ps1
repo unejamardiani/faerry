@@ -12,7 +12,9 @@ param(
     [switch]$SkipClaudeExtension,
     [switch]$WithClaudeExtension,
     [switch]$WithCoworkLive,
-    [switch]$DryRunCowork
+    [switch]$DryRunCowork,
+    [switch]$WithMcps,
+    [switch]$DryRunMcps
 )
 
 $ErrorActionPreference = "Stop"
@@ -55,6 +57,14 @@ if ($WithCoworkLive -or $DryRunCowork) {
     $CoworkArgs = @()
     if ($DryRunCowork) { $CoworkArgs += "--dry-run" }
     node (Join-Path $ScriptDir "sync-claude-cowork-skills.mjs") @CoworkArgs
+}
+
+if ($WithMcps -or $DryRunMcps) {
+    Write-Host ""
+    Write-Host "MCP servers"
+    $McpArgs = @()
+    if ($DryRunMcps) { $McpArgs += "--dry-run" }
+    node (Join-Path $ScriptDir "sync-mcps.mjs") @McpArgs
 }
 
 Write-Host ""

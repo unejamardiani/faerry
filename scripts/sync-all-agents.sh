@@ -9,6 +9,8 @@ WITH_CLAUDE_PACKAGES=1
 WITH_CLAUDE_EXTENSION=1
 WITH_COWORK_LIVE=0
 DRY_RUN_COWORK=0
+WITH_MCPS=0
+DRY_RUN_MCPS=0
 
 declare -a LINK_ARGS=()
 
@@ -43,6 +45,8 @@ Options:
   --with-claude-extension     Deprecated no-op; the extension is built by default.
   --with-cowork-live          Copy repo skills into Claude/Cowork/Claude-3P live workspaces.
   --dry-run-cowork            Show Cowork live sync targets without copying.
+  --with-mcps                 Sync repo-managed MCP servers into Claude Code, Codex, and OpenCode.
+  --dry-run-mcps              Show MCP sync changes without writing.
   --help                      Show this help.
 EOF
 }
@@ -81,6 +85,15 @@ while [[ $# -gt 0 ]]; do
     --dry-run-cowork)
       DRY_RUN_COWORK=1
       WITH_COWORK_LIVE=1
+      shift
+      ;;
+    --with-mcps)
+      WITH_MCPS=1
+      shift
+      ;;
+    --dry-run-mcps)
+      DRY_RUN_MCPS=1
+      WITH_MCPS=1
       shift
       ;;
     --help|-h)
@@ -125,6 +138,16 @@ if [[ "$WITH_COWORK_LIVE" -eq 1 ]]; then
     node "$SCRIPT_DIR/sync-claude-cowork-skills.mjs" --dry-run
   else
     node "$SCRIPT_DIR/sync-claude-cowork-skills.mjs"
+  fi
+fi
+
+if [[ "$WITH_MCPS" -eq 1 ]]; then
+  echo ""
+  echo "MCP servers"
+  if [[ "$DRY_RUN_MCPS" -eq 1 ]]; then
+    node "$SCRIPT_DIR/sync-mcps.mjs" --dry-run
+  else
+    node "$SCRIPT_DIR/sync-mcps.mjs"
   fi
 fi
 
