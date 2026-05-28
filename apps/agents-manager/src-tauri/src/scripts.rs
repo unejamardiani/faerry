@@ -568,6 +568,7 @@ fn script_name(_repo: &AgentsRepo, base: &str) -> String {
 fn affected_shared(repo: &AgentsRepo) -> Vec<String> {
     vec![
         repo.agents_home.clone(),
+        path_join(&repo.root, &[".agents-manager", "runtime", "skills"]),
         path_join(&repo.home, &[".claude"]),
         repo.codex_home.clone(),
         path_join(&repo.home, &[".config", "opencode"]),

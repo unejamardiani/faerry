@@ -81,7 +81,7 @@ Git imports support an optional branch/tag and shallow clone mode. The destinati
 
 ## Resource Sources
 
-The app can load skills and commands from additional local source checkouts at startup/refresh time. Add a `sources.json` file to the selected repo root:
+The app can load skills, commands, and DESIGN.md files from additional local or Git source checkouts at startup/refresh time. Add a `sources.json` file to the selected repo root:
 
 ```json
 {
@@ -142,9 +142,11 @@ By default the app reads `skills/` and `commands/` under each source. Set `desig
 
 For folders with many skills, use `includeSkills` and `excludeSkills` as simple glob lists. Patterns are matched against the skill folder name, the skill display name from frontmatter, and the path relative to the source root. If `includeSkills` is omitted or empty, all discovered skills are included. `excludeSkills` is applied after includes. Commands have the same optional `includeCommands` and `excludeCommands` filters.
 
+When link/sync runs, enabled source skills are materialized into `.agents-manager/runtime/skills` together with local repo skills. Then `~/.agents/skills` points at that generated aggregate folder, so Claude Code, Codex, OpenCode, and Copilot CLI see the same local and remote skill set. The runtime folder and Git cache are generated state and should not be committed.
+
 Design.md support is read-only in the manager. The app discovers root-level `DESIGN.md`, `designs/DESIGN.md`, `designs/<name>/DESIGN.md`, and configured design paths. `includeDesigns` and `excludeDesigns` use the same simple glob matching as skills.
 
-The local selected repo wins on name conflicts. External skills and commands are shown with `source-only` install status because the current sync scripts still link only the selected repo's own `skills/` and `commands/` directories.
+The local selected repo wins on name conflicts. External commands and DESIGN.md files are inspection-only for now; external skills become installed once the source aggregate has been generated and linked.
 
 ## Inspection Views
 

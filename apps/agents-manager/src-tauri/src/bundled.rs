@@ -27,6 +27,11 @@ const SCRIPTS: &[BundledScript] = &[
         executable: true,
     },
     BundledScript {
+        name: "sync-source-skills.mjs",
+        content: include_str!("../../../../scripts/sync-source-skills.mjs"),
+        executable: true,
+    },
+    BundledScript {
         name: "package-claude-skills.sh",
         content: include_str!("../../../../scripts/package-claude-skills.sh"),
         executable: true,

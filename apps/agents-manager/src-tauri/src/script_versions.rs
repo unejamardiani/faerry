@@ -8,6 +8,7 @@ const SCRIPT_NAMES: &[&str] = &[
     "link-agents.sh",
     "sync-all-agents.sh",
     "sync-mcps.mjs",
+    "sync-source-skills.mjs",
     "package-claude-skills.sh",
     "package-claude-extension.sh",
     "sync-claude-cowork-skills.mjs",

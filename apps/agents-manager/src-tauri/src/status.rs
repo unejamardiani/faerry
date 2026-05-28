@@ -809,6 +809,7 @@ fn read_skills(
     warnings: &mut Vec<String>,
 ) -> Vec<SkillItem> {
     let mut seen = BTreeSet::new();
+    let aggregate_skills_dir = runtime_skills_dir(repo);
     let mut items: Vec<SkillItem> = repo::list_dirs(&repo.paths.skills)
         .into_iter()
         .map(|name| {
@@ -837,18 +838,38 @@ fn read_skills(
         let Some(skills_dir) = &source.skills_dir else {
             for skill_dir in &source.skill_dirs {
                 read_source_skill_dir(
-                    source, skill_dir, &mut seen, warnings, &mut items, &installs,
+                    source,
+                    skill_dir,
+                    &mut seen,
+                    warnings,
+                    &mut items,
+                    &installs,
+                    aggregate_skills_dir.as_deref(),
                 );
             }
             continue;
         };
         for folder_name in repo::list_dirs(skills_dir) {
             let path = skills_dir.join(&folder_name);
-            read_source_skill_dir(source, &path, &mut seen, warnings, &mut items, &installs);
+            read_source_skill_dir(
+                source,
+                &path,
+                &mut seen,
+                warnings,
+                &mut items,
+                &installs,
+                aggregate_skills_dir.as_deref(),
+            );
         }
         for skill_dir in &source.skill_dirs {
             read_source_skill_dir(
-                source, skill_dir, &mut seen, warnings, &mut items, &installs,
+                source,
+                skill_dir,
+                &mut seen,
+                warnings,
+                &mut items,
+                &installs,
+                aggregate_skills_dir.as_deref(),
             );
         }
     }
@@ -863,6 +884,7 @@ fn read_source_skill_dir(
     warnings: &mut Vec<String>,
     items: &mut Vec<SkillItem>,
     installs: &BTreeMap<String, String>,
+    aggregate_skills_dir: Option<&Path>,
 ) {
     let file = path.join("SKILL.md");
     let text = repo::read_text(&file).unwrap_or_default();
@@ -900,7 +922,7 @@ fn read_source_skill_dir(
         source_kind: source.source_kind.clone(),
         frontmatter,
         preview: truncate_preview(&text),
-        installs: source_only_installs(installs),
+        installs: source_skill_installs(aggregate_skills_dir, path, installs),
     });
 }
 
@@ -1026,6 +1048,36 @@ fn source_only_installs(installs: &BTreeMap<String, String>) -> BTreeMap<String,
         .keys()
         .map(|tool| (tool.clone(), "source-only".into()))
         .collect()
+}
+
+fn source_skill_installs(
+    aggregate_skills_dir: Option<&Path>,
+    skill_path: &Path,
+    installs: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    if aggregate_skills_dir
+        .map(|aggregate| aggregate_contains_skill(aggregate, skill_path))
+        .unwrap_or(false)
+    {
+        return installs.clone();
+    }
+    source_only_installs(installs)
+}
+
+fn aggregate_contains_skill(aggregate_skills_dir: &Path, skill_path: &Path) -> bool {
+    let expected = match fs::canonicalize(skill_path) {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+    let entries = match fs::read_dir(aggregate_skills_dir) {
+        Ok(entries) => entries,
+        Err(_) => return false,
+    };
+    entries.filter_map(Result::ok).any(|entry| {
+        fs::canonicalize(entry.path())
+            .map(|path| path == expected)
+            .unwrap_or(false)
+    })
 }
 
 fn read_designs(
@@ -1406,6 +1458,7 @@ fn link_tool(
     paths: BTreeMap<String, String>,
     repo: &AgentsRepo,
 ) -> ToolStatus {
+    let skills_path = effective_skills_path(repo);
     let resources = BTreeMap::from([
         (
             "globalInstructions".into(),
@@ -1413,7 +1466,7 @@ fn link_tool(
         ),
         (
             "skills".into(),
-            symlink_status(paths.get("skills").unwrap(), &repo.paths.skills),
+            symlink_status(paths.get("skills").unwrap(), &skills_path),
         ),
         (
             "commands".into(),
@@ -1431,6 +1484,24 @@ fn link_tool(
         ),
         paths,
         resources,
+    }
+}
+
+fn effective_skills_path(repo: &AgentsRepo) -> String {
+    runtime_skills_dir(repo)
+        .map(repo::display_path)
+        .unwrap_or_else(|| repo.paths.skills.clone())
+}
+
+fn runtime_skills_dir(repo: &AgentsRepo) -> Option<PathBuf> {
+    let aggregate = Path::new(&repo.root)
+        .join(".agents-manager")
+        .join("runtime")
+        .join("skills");
+    if aggregate.is_dir() {
+        Some(aggregate)
+    } else {
+        None
     }
 }
 
@@ -1998,6 +2069,84 @@ mod tests {
     }
 
     #[test]
+    fn read_skills_marks_source_skill_installed_when_runtime_aggregate_contains_it() {
+        let root = temp_path("agents-manager-source-install-test");
+        let repo_root = root.join("repo");
+        let source_root = root.join("source");
+        let aggregate_root = repo_root.join(".agents-manager/runtime/skills");
+
+        fs::create_dir_all(repo_root.join("skills/local")).unwrap();
+        fs::create_dir_all(source_root.join("skills/external")).unwrap();
+        fs::create_dir_all(&aggregate_root).unwrap();
+        fs::write(
+            repo_root.join("skills/local/SKILL.md"),
+            "---\nname: Local Skill\n---\n\nLocal body\n",
+        )
+        .unwrap();
+        fs::write(
+            source_root.join("skills/external/SKILL.md"),
+            "---\nname: External Skill\n---\n\nExternal body\n",
+        )
+        .unwrap();
+        symlink_dir(
+            &source_root.join("skills/external"),
+            &aggregate_root.join("external"),
+        );
+
+        let repo = AgentsRepo {
+            ok: true,
+            root: repo::display_path(&repo_root),
+            home: repo::display_path(root.join("home")),
+            agents_home: repo::display_path(root.join("home/.agents")),
+            codex_home: repo::display_path(root.join("home/.codex")),
+            paths: RepoPaths {
+                agents: repo::display_path(repo_root.join("AGENTS.md")),
+                skills: repo::display_path(repo_root.join("skills")),
+                commands: repo::display_path(repo_root.join("commands")),
+                designs: repo::display_path(repo_root.join("designs")),
+                registry: repo::display_path(repo_root.join("mcp/servers.json")),
+                scripts: repo::display_path(repo_root.join("scripts")),
+            },
+        };
+        let source = LoadedResourceSource {
+            name: "external-source".into(),
+            resolved_path: source_root.clone(),
+            source_kind: "external".into(),
+            skills_dir: Some(source_root.join("skills")),
+            skill_dirs: Vec::new(),
+            commands_dir: None,
+            command_files: Vec::new(),
+            designs_dir: None,
+            design_files: Vec::new(),
+            include_skills: Vec::new(),
+            exclude_skills: Vec::new(),
+            include_commands: Vec::new(),
+            exclude_commands: Vec::new(),
+            include_designs: Vec::new(),
+            exclude_designs: Vec::new(),
+        };
+        let installs = BTreeMap::from([
+            ("claude-code".into(), "installed".into()),
+            ("codex".into(), "installed".into()),
+            ("opencode".into(), "installed".into()),
+        ]);
+        let mut warnings = Vec::new();
+
+        let skills = read_skills(&repo, installs, &[source], &mut warnings);
+        let external = skills
+            .iter()
+            .find(|skill| skill.name == "External Skill")
+            .expect("external skill should be loaded");
+
+        assert!(external
+            .installs
+            .values()
+            .all(|status| status == "installed"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn build_state_clones_git_source_and_loads_selected_skill_paths() {
         if !command_available("git") {
             return;
@@ -2211,5 +2360,15 @@ mod tests {
             args,
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[cfg(unix)]
+    fn symlink_dir(source: &Path, target: &Path) {
+        std::os::unix::fs::symlink(source, target).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn symlink_dir(source: &Path, target: &Path) {
+        std::os::windows::fs::symlink_dir(source, target).unwrap();
     }
 }

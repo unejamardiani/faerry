@@ -4,7 +4,12 @@ use crate::{
     repo, scripts,
 };
 use serde_json::{Map, Value};
-use std::{collections::BTreeMap, fs, path::PathBuf, process::Command};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 const MANAGED_START: &str = "# BEGIN portable-agents managed MCP servers";
 const MANAGED_END: &str = "# END portable-agents managed MCP servers";
@@ -100,6 +105,7 @@ fn includes_opencode_mcp_preview(action: &str) -> bool {
 
 fn link_preview_sections(repo: &AgentsRepo) -> Vec<DiffSection> {
     let mut sections = Vec::new();
+    let skills_path = effective_skills_path(repo);
 
     if repo.root != repo.agents_home {
         sections.push(symlink_section(
@@ -110,7 +116,7 @@ fn link_preview_sections(repo: &AgentsRepo) -> Vec<DiffSection> {
         sections.push(symlink_section(
             "Shared skills",
             path_join(&repo.agents_home, &["skills"]),
-            repo.paths.skills.clone(),
+            skills_path,
         ));
         sections.push(symlink_section(
             "Shared commands",
@@ -189,6 +195,18 @@ fn link_preview_sections(repo: &AgentsRepo) -> Vec<DiffSection> {
     ));
 
     sections
+}
+
+fn effective_skills_path(repo: &AgentsRepo) -> String {
+    let aggregate = Path::new(&repo.root)
+        .join(".agents-manager")
+        .join("runtime")
+        .join("skills");
+    if aggregate.is_dir() {
+        repo::display_path(aggregate)
+    } else {
+        repo.paths.skills.clone()
+    }
 }
 
 fn symlink_section(title: &str, target: String, expected: String) -> DiffSection {

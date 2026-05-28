@@ -6,7 +6,8 @@ import os from "node:os";
 
 const scriptDir = path.dirname(new URL(import.meta.url).pathname);
 const repoRoot = path.resolve(scriptDir, "..");
-const repoSkillsDir = path.join(repoRoot, "skills");
+const aggregateSkillsDir = path.join(repoRoot, ".agents-manager", "runtime", "skills");
+const repoSkillsDir = exists(aggregateSkillsDir) ? aggregateSkillsDir : path.join(repoRoot, "skills");
 const syncStateFileName = ".portable-agents-sync.json";
 
 const defaultAppRoots = [
@@ -68,6 +69,7 @@ function copyDirectory(source, target) {
   fs.mkdirSync(target, { recursive: true });
   fs.cpSync(source, target, {
     recursive: true,
+    dereference: true,
     force: true,
     filter: (src) => path.basename(src) !== ".DS_Store",
   });

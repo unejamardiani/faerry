@@ -16,6 +16,7 @@ SKIP_OPENCODE=0
 SKIP_CODEX=0
 SKIP_COPILOT=0
 BACKUP_COUNT=0
+SKILLS_SOURCE_DIR="$REPO_ROOT/skills"
 
 usage() {
   cat <<EOF
@@ -93,6 +94,28 @@ if [[ ! -f "$REPO_ROOT/AGENTS.md" || ! -d "$REPO_ROOT/skills" ]]; then
   exit 1
 fi
 
+prepare_skills_source() {
+  SKILLS_SOURCE_DIR="$REPO_ROOT/skills"
+  local sync_source_script="$SCRIPT_DIR/sync-source-skills.mjs"
+  if [[ ! -f "$sync_source_script" && -f "$REPO_ROOT/scripts/sync-source-skills.mjs" ]]; then
+    sync_source_script="$REPO_ROOT/scripts/sync-source-skills.mjs"
+  fi
+  if [[ -f "$REPO_ROOT/sources.json" && -f "$sync_source_script" ]]; then
+    if command -v node >/dev/null 2>&1; then
+      echo ""
+      echo "Source skills"
+      node "$sync_source_script" --repo-root "$REPO_ROOT"
+      if [[ -d "$REPO_ROOT/.agents-manager/runtime/skills" ]]; then
+        SKILLS_SOURCE_DIR="$REPO_ROOT/.agents-manager/runtime/skills"
+      fi
+    else
+      echo "  warning: node is missing; remote source skills were not aggregated." >&2
+    fi
+  elif [[ -f "$REPO_ROOT/sources.json" ]]; then
+    echo "  warning: sources.json exists, but sync-source-skills.mjs was not found." >&2
+  fi
+}
+
 backup_target() {
   local target=$1
   local relative
@@ -168,7 +191,7 @@ install_shared_agents() {
 
   mkdir -p "$AGENTS_HOME"
   link_path "$REPO_ROOT/AGENTS.md" "$AGENTS_HOME/AGENTS.md" "shared AGENTS.md"
-  link_path "$REPO_ROOT/skills" "$AGENTS_HOME/skills" "shared skills"
+  link_path "$SKILLS_SOURCE_DIR" "$AGENTS_HOME/skills" "shared skills"
 }
 
 install_claude() {
@@ -216,6 +239,7 @@ echo "agents repo linker"
 echo "repo   $REPO_ROOT"
 echo "target $HOME_DIR"
 
+prepare_skills_source
 install_shared_agents
 install_claude
 install_opencode

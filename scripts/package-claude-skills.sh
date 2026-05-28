@@ -5,6 +5,9 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 SKILLS_DIR="$REPO_ROOT/skills"
+if [[ -d "$REPO_ROOT/.agents-manager/runtime/skills" ]]; then
+  SKILLS_DIR="$REPO_ROOT/.agents-manager/runtime/skills"
+fi
 OUTPUT_DIR="$REPO_ROOT/dist/claude-desktop/skills"
 
 if ! command -v zip >/dev/null 2>&1; then
@@ -51,7 +54,7 @@ for skill_name in "${TARGETS[@]}"; do
 
   temp_dir=$(mktemp -d)
   trap 'rm -rf "$temp_dir"' EXIT
-  cp -R "$skill_path" "$temp_dir/$skill_name"
+  cp -RL "$skill_path" "$temp_dir/$skill_name"
   find "$temp_dir" -name '.DS_Store' -delete
 
   output_path="$OUTPUT_DIR/$skill_name.zip"

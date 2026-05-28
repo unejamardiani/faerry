@@ -213,9 +213,9 @@ fn parse_script_output(stdout: String, stderr: String, exit_code: Option<i32>) -
 
     for line in output.lines() {
         let lower = line.to_lowercase();
-        if lower.contains("error") || lower.contains("failed") {
+        if is_error_line(&lower) {
             errors.push(line.to_string());
-        } else if lower.contains("warning") || lower.contains("warn") {
+        } else if is_warning_line(&lower) {
             warnings.push(line.to_string());
         } else if lower.contains("skipped") || lower.contains("skip") {
             skipped.push(line.to_string());
@@ -245,6 +245,39 @@ fn parse_script_output(stdout: String, stderr: String, exit_code: Option<i32>) -
         raw_stderr: stderr,
         exit_code,
     }
+}
+
+fn is_error_line(lower: &str) -> bool {
+    let value = lower.trim();
+    if value.is_empty() || is_archive_listing_line(value) {
+        return false;
+    }
+    value.starts_with("error")
+        || value.starts_with("fatal")
+        || value.starts_with("failed")
+        || value.starts_with("npm err")
+        || value.contains(" error:")
+        || value.contains(" failed")
+        || value.contains(" failed:")
+        || value.contains("failure")
+}
+
+fn is_warning_line(lower: &str) -> bool {
+    let value = lower.trim();
+    if value.is_empty() || is_archive_listing_line(value) {
+        return false;
+    }
+    value.starts_with("warning")
+        || value.starts_with("warn")
+        || value.contains(" warning:")
+        || value.contains(" warn:")
+}
+
+fn is_archive_listing_line(value: &str) -> bool {
+    value.contains("node_modules/")
+        || value.starts_with("archive contents")
+        || value.starts_with("archive details")
+        || value.starts_with("ignored (")
 }
 
 // --- Feature 15: Repo Validation ---
@@ -756,4 +789,38 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agents Manager");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn structured_output_does_not_treat_archive_paths_as_errors() {
+        let output = parse_script_output(
+            [
+                "Archive Contents",
+                "   1.8kB node_modules/es-errors/CHANGELOG.md",
+                "   4.0kB node_modules/http-errors/HISTORY.md",
+                "Done.",
+            ]
+            .join("\n"),
+            String::new(),
+            Some(0),
+        );
+
+        assert!(output.errors.is_empty());
+        assert_eq!(output.exit_code, Some(0));
+    }
+
+    #[test]
+    fn structured_output_still_reports_real_errors() {
+        let output = parse_script_output(
+            "error: unable to write target\nfailed to sync MCP\n".into(),
+            String::new(),
+            Some(1),
+        );
+
+        assert_eq!(output.errors.len(), 2);
+    }
 }
