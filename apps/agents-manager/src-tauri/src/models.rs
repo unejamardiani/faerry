@@ -18,6 +18,7 @@ pub struct RepoPaths {
     pub agents: String,
     pub skills: String,
     pub commands: String,
+    pub designs: String,
     pub registry: String,
     pub scripts: String,
 }
@@ -33,6 +34,7 @@ pub struct AppState {
     pub tools: Vec<ToolStatus>,
     pub skills: Vec<SkillItem>,
     pub commands: Vec<CommandItem>,
+    pub designs: Vec<DesignItem>,
     pub mcp_statuses: BTreeMap<String, Vec<McpInstallStatus>>,
 }
 
@@ -87,13 +89,19 @@ pub struct ResourceSourceConfig {
     #[serde(default)]
     pub commands: Option<bool>,
     #[serde(default)]
+    pub designs: Option<bool>,
+    #[serde(default)]
     pub skills_path: Option<String>,
     #[serde(default)]
     pub commands_path: Option<String>,
     #[serde(default)]
+    pub designs_path: Option<String>,
+    #[serde(default)]
     pub skill_paths: Vec<String>,
     #[serde(default)]
     pub command_paths: Vec<String>,
+    #[serde(default)]
+    pub design_paths: Vec<String>,
     #[serde(default)]
     pub include_skills: Vec<String>,
     #[serde(default)]
@@ -102,6 +110,10 @@ pub struct ResourceSourceConfig {
     pub include_commands: Vec<String>,
     #[serde(default)]
     pub exclude_commands: Vec<String>,
+    #[serde(default)]
+    pub include_designs: Vec<String>,
+    #[serde(default)]
+    pub exclude_designs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -132,6 +144,20 @@ pub struct CommandItem {
     pub frontmatter: BTreeMap<String, String>,
     pub preview: String,
     pub installs: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesignItem {
+    pub name: String,
+    pub description: String,
+    pub path: String,
+    pub file: String,
+    pub source_name: String,
+    pub source_path: String,
+    pub source_kind: String,
+    pub frontmatter: BTreeMap<String, String>,
+    pub preview: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

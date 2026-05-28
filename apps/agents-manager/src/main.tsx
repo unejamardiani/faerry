@@ -45,6 +45,18 @@ type CommandItem = {
   installs: Record<string, string>;
 };
 
+type DesignItem = {
+  name: string;
+  description: string;
+  path: string;
+  file: string;
+  sourceName: string;
+  sourcePath: string;
+  sourceKind: string;
+  frontmatter: Record<string, string>;
+  preview: string;
+};
+
 type ResourceSourceStatus = {
   name: string;
   path: string;
@@ -109,6 +121,7 @@ type AppState = {
   tools: ToolStatus[];
   skills: SkillItem[];
   commands: CommandItem[];
+  designs: DesignItem[];
   mcpStatuses: Record<string, McpInstallStatus[]>;
 };
 
@@ -300,7 +313,7 @@ type SelectiveSyncPlan = {
   warnings: string[];
 };
 
-const views = ["Dashboard", "Skills", "Commands", "MCP Servers", "Tools", "Diffs", "Backups", "About", "Validation", "Editor", "Logs", "Profiles"] as const;
+const views = ["Dashboard", "Skills", "Commands", "Designs", "MCP Servers", "Tools", "Diffs", "Backups", "About", "Validation", "Editor", "Logs", "Profiles"] as const;
 type View = (typeof views)[number];
 
 const actions = [
@@ -335,6 +348,7 @@ function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<SkillItem | null>(null);
   const [selectedCommand, setSelectedCommand] = useState<CommandItem | null>(null);
+  const [selectedDesign, setSelectedDesign] = useState<DesignItem | null>(null);
   const [selectedMcp, setSelectedMcp] = useState<McpServer | null>(null);
   const [structuredOutput, setStructuredOutput] = useState<StructuredOutput | null>(null);
   const [diffPreview, setDiffPreview] = useState<DiffPreview | null>(null);
@@ -618,6 +632,7 @@ function App() {
             {view === "Dashboard" && <Dashboard state={state} toolById={toolById} onAction={reviewAction} />}
             {view === "Skills" && <Skills state={state} selected={selectedSkill} onSelect={setSelectedSkill} openPath={openPath} copyText={copyText} />}
             {view === "Commands" && <Commands state={state} selected={selectedCommand} onSelect={setSelectedCommand} openPath={openPath} copyText={copyText} />}
+            {view === "Designs" && <Designs state={state} selected={selectedDesign} onSelect={setSelectedDesign} openPath={openPath} copyText={copyText} />}
             {view === "MCP Servers" && <Mcps state={state} selected={selectedMcp} onSelect={setSelectedMcp} onAction={reviewAction} openPath={openPath} copyText={copyText} />}
             {view === "Tools" && <Tools state={state} onAction={reviewAction} openPath={openPath} />}
             {view === "Diffs" && <Diffs preview={diffPreview} changedOnly={diffChangedOnly} onChangedOnly={setDiffChangedOnly} onPreview={loadDiffPreview} openPath={openPath} copyText={copyText} />}
@@ -684,7 +699,7 @@ function Dashboard({ state, toolById, onAction }: { state: AppState; toolById: R
           ))}
         </div>
       </Panel>
-      <Panel title="Health" subtitle={`${state.skills.length} skills, ${state.commands.length} commands, ${state.registry.servers.length} MCP servers.`}>
+      <Panel title="Health" subtitle={`${state.skills.length} skills, ${state.commands.length} commands, ${state.designs.length} designs, ${state.registry.servers.length} MCP servers.`}>
         <table>
           <thead>
             <tr>
@@ -853,6 +868,74 @@ function Commands({
             <div className="buttonRow padded compact">
               <button className="ghostButton" onClick={() => openPath(current.path)}>Open Command</button>
               <button className="ghostButton" onClick={() => state.repo?.paths.commands && openPath(state.repo.paths.commands)}>Open Folder</button>
+              <button className="ghostButton" onClick={() => copyText(current.path)}>Copy Path</button>
+            </div>
+          </div>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function Designs({
+  state,
+  selected,
+  onSelect,
+  openPath,
+  copyText,
+}: {
+  state: AppState;
+  selected: DesignItem | null;
+  onSelect: (design: DesignItem) => void;
+  openPath: (path: string) => void;
+  copyText: (text: string) => void;
+}) {
+  const current = selected ?? state.designs[0] ?? null;
+  return (
+    <div className="splitView">
+      <Panel title="Designs" subtitle={`Read from ${state.repo?.paths.designs} and root DESIGN.md${state.sourceConfig.sources.length ? ` plus ${state.sourceConfig.sources.length} configured source${state.sourceConfig.sources.length === 1 ? "" : "s"}` : ""}`}>
+        {state.designs.length === 0 ? (
+          <div className="empty">No DESIGN.md files found in the selected repo or configured sources.</div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Source</th>
+                <th>Description</th>
+                <th>File</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.designs.map((design) => (
+                <tr key={design.path} className={current?.path === design.path ? "selectedRow" : ""} onClick={() => onSelect(design)}>
+                  <td>{design.name}</td>
+                  <td>
+                    <StatusPill value={design.sourceKind} />
+                    <div className="path">{design.sourceName}</div>
+                  </td>
+                  <td className="description">{design.description || "No frontmatter description."}</td>
+                  <td className="path">{design.file}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
+      {current && (
+        <Panel title="Design Detail" subtitle={current.name}>
+          <div className="detailPane">
+            <Field label="Description">{current.description || "No description."}</Field>
+            <Field label="Source">
+              <StatusPill value={current.sourceKind} />
+              <div className="path">{current.sourceName}</div>
+              <div className="path">{current.sourcePath}</div>
+            </Field>
+            <Field label="DESIGN.md"><div className="path">{current.file}</div></Field>
+            <Field label="Frontmatter"><pre className="fieldDiff">{JSON.stringify(current.frontmatter, null, 2)}</pre></Field>
+            <Field label="Preview"><pre className="previewText">{current.preview || "<empty>"}</pre></Field>
+            <div className="buttonRow padded compact">
+              <button className="ghostButton" onClick={() => openPath(current.file)}>Open DESIGN.md</button>
               <button className="ghostButton" onClick={() => copyText(current.path)}>Copy Path</button>
             </div>
           </div>

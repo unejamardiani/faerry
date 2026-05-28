@@ -219,6 +219,7 @@ fn make_repo(root: PathBuf, home: PathBuf) -> AgentsRepo {
             agents: display_path(root.join("AGENTS.md")),
             skills: display_path(root.join("skills")),
             commands: display_path(root.join("commands")),
+            designs: display_path(root.join("designs")),
             registry: display_path(root.join("mcp/servers.json")),
             scripts: display_path(root.join("scripts")),
         },

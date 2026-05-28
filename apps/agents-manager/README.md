@@ -119,6 +119,18 @@ The app can load skills and commands from additional local source checkouts at s
         "skills/first-skill",
         "skills/second-skill"
       ]
+    },
+    {
+      "name": "google-design-md-examples",
+      "url": "https://github.com/google-labs-code/design.md.git",
+      "ref": "main",
+      "skills": false,
+      "commands": false,
+      "designs": true,
+      "designsPath": "examples",
+      "includeDesigns": [
+        "*"
+      ]
     }
   ]
 }
@@ -126,9 +138,11 @@ The app can load skills and commands from additional local source checkouts at s
 
 Local `path` entries may be absolute, `~/...`, or relative to the selected repo. Git `url` entries are cloned into `.agents-manager/source-cache/` under the selected repo and loaded from that cache. GitHub `tree/...` links can point at a repo root, a `skills/` folder, or a single skill folder containing `SKILL.md`; GitHub `blob/.../SKILL.md` links are treated as that single skill folder.
 
-By default the app reads `skills/` and `commands/` under each source. Use `skillsPath` or `commandsPath` when a source uses a different folder layout, or `skillPaths` / `commandPaths` to list specific entries from one source. Set `ref` or `branch` for Git branches/tags. Set `refresh: true` when the app should fetch the Git source on every load; otherwise it clones once and reuses the cache.
+By default the app reads `skills/` and `commands/` under each source. Set `designs: true` to also load DESIGN.md files. Use `skillsPath`, `commandsPath`, or `designsPath` when a source uses a different folder layout, or `skillPaths` / `commandPaths` / `designPaths` to list specific entries from one source. Set `ref` or `branch` for Git branches/tags. Set `refresh: true` when the app should fetch the Git source on every load; otherwise it clones once and reuses the cache.
 
 For folders with many skills, use `includeSkills` and `excludeSkills` as simple glob lists. Patterns are matched against the skill folder name, the skill display name from frontmatter, and the path relative to the source root. If `includeSkills` is omitted or empty, all discovered skills are included. `excludeSkills` is applied after includes. Commands have the same optional `includeCommands` and `excludeCommands` filters.
+
+Design.md support is read-only in the manager. The app discovers root-level `DESIGN.md`, `designs/DESIGN.md`, `designs/<name>/DESIGN.md`, and configured design paths. `includeDesigns` and `excludeDesigns` use the same simple glob matching as skills.
 
 The local selected repo wins on name conflicts. External skills and commands are shown with `source-only` install status because the current sync scripts still link only the selected repo's own `skills/` and `commands/` directories.
 

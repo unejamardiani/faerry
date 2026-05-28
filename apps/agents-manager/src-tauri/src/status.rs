@@ -30,6 +30,11 @@ pub fn build_state(repo_override: Option<String>) -> AppState {
                 &source_load.sources,
                 &mut source_load.status.warnings,
             );
+            let designs = read_designs(
+                &repo,
+                &source_load.sources,
+                &mut source_load.status.warnings,
+            );
             let mcp_statuses = read_mcp_statuses(&repo, &registry.servers);
             AppState {
                 repo: Some(repo),
@@ -40,6 +45,7 @@ pub fn build_state(repo_override: Option<String>) -> AppState {
                 tools,
                 skills,
                 commands,
+                designs,
                 mcp_statuses,
             }
         }
@@ -64,6 +70,7 @@ pub fn build_state(repo_override: Option<String>) -> AppState {
             tools: Vec::new(),
             skills: Vec::new(),
             commands: Vec::new(),
+            designs: Vec::new(),
             mcp_statuses: BTreeMap::new(),
         },
     }
@@ -92,10 +99,14 @@ struct LoadedResourceSource {
     skill_dirs: Vec<PathBuf>,
     commands_dir: Option<PathBuf>,
     command_files: Vec<PathBuf>,
+    designs_dir: Option<PathBuf>,
+    design_files: Vec<PathBuf>,
     include_skills: Vec<String>,
     exclude_skills: Vec<String>,
     include_commands: Vec<String>,
     exclude_commands: Vec<String>,
+    include_designs: Vec<String>,
+    exclude_designs: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -221,11 +232,19 @@ fn read_source_config(repo: &AgentsRepo) -> SourceLoad {
             } else {
                 (None, Vec::new())
             };
+        let (designs_dir, design_files) = if resources.iter().any(|resource| resource == "designs")
+        {
+            resolve_design_paths(&resolved_path, source)
+        } else {
+            (None, Vec::new())
+        };
 
         if skills_dir.is_none()
             && skill_dirs.is_empty()
             && commands_dir.is_none()
             && command_files.is_empty()
+            && designs_dir.is_none()
+            && design_files.is_empty()
         {
             source_status.status = "warning".into();
             source_status.message =
@@ -244,6 +263,9 @@ fn read_source_config(repo: &AgentsRepo) -> SourceLoad {
         }
         if commands_dir.is_some() || !command_files.is_empty() {
             loaded_resources.push("commands");
+        }
+        if designs_dir.is_some() || !design_files.is_empty() {
+            loaded_resources.push("designs");
         }
         source_status.status = if resolved.warnings.is_empty() {
             "loaded".into()
@@ -264,10 +286,14 @@ fn read_source_config(repo: &AgentsRepo) -> SourceLoad {
             skill_dirs,
             commands_dir,
             command_files,
+            designs_dir,
+            design_files,
             include_skills: source.include_skills.clone(),
             exclude_skills: source.exclude_skills.clone(),
             include_commands: source.include_commands.clone(),
             exclude_commands: source.exclude_commands.clone(),
+            include_designs: source.include_designs.clone(),
+            exclude_designs: source.exclude_designs.clone(),
         });
     }
 
@@ -314,12 +340,16 @@ fn resolve_source_root(
 fn enabled_resources(source: &ResourceSourceConfig) -> Vec<String> {
     let skills = source.skills.unwrap_or(true);
     let commands = source.commands.unwrap_or(true);
+    let designs = source.designs.unwrap_or(false);
     let mut resources = Vec::new();
     if skills {
         resources.push("skills".into());
     }
     if commands {
         resources.push("commands".into());
+    }
+    if designs {
+        resources.push("designs".into());
     }
     resources
 }
@@ -589,6 +619,52 @@ fn resolve_command_paths(
     (None, Vec::new())
 }
 
+fn resolve_design_paths(
+    root: &Path,
+    source: &ResourceSourceConfig,
+) -> (Option<PathBuf>, Vec<PathBuf>) {
+    if !source.design_paths.is_empty() {
+        return (
+            None,
+            source
+                .design_paths
+                .iter()
+                .filter_map(|path| resolve_design_file(&join_source_child(root, path)))
+                .collect(),
+        );
+    }
+    if let Some(designs_path) = source.designs_path.as_deref() {
+        let path = join_source_child(root, designs_path);
+        if let Some(file) = resolve_design_file(&path) {
+            return (None, vec![file]);
+        }
+        return (path.is_dir().then_some(path), Vec::new());
+    }
+    if let Some(file) = resolve_design_file(root) {
+        return (None, vec![file]);
+    }
+    let conventional = root.join("designs");
+    if conventional.is_dir() {
+        return (Some(conventional), Vec::new());
+    }
+    if has_design_children(root) {
+        return (Some(root.to_path_buf()), Vec::new());
+    }
+    (None, Vec::new())
+}
+
+fn resolve_design_file(path: &Path) -> Option<PathBuf> {
+    if path.is_file()
+        && path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("DESIGN.md"))
+    {
+        return Some(path.to_path_buf());
+    }
+    let file = path.join("DESIGN.md");
+    file.is_file().then_some(file)
+}
+
 fn join_source_child(root: &Path, child: &str) -> PathBuf {
     let child_path = PathBuf::from(child);
     if child_path.is_absolute() {
@@ -602,6 +678,38 @@ fn has_skill_children(path: &Path) -> bool {
     repo::list_dirs(path)
         .into_iter()
         .any(|name| path.join(name).join("SKILL.md").is_file())
+}
+
+fn has_design_children(path: &Path) -> bool {
+    if !list_design_files(path).is_empty() {
+        return true;
+    }
+    repo::list_dirs(path)
+        .into_iter()
+        .any(|name| path.join(name).join("DESIGN.md").is_file())
+}
+
+fn list_design_files(path: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = fs::read_dir(path)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.flatten())
+        .filter_map(|entry| {
+            let file_type = entry.file_type().ok()?;
+            let path = entry.path();
+            if file_type.is_file()
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("DESIGN.md"))
+            {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
+    files.sort();
+    files
 }
 
 fn relative_source_path(root: &Path, path: &Path) -> String {
@@ -918,6 +1026,200 @@ fn source_only_installs(installs: &BTreeMap<String, String>) -> BTreeMap<String,
         .keys()
         .map(|tool| (tool.clone(), "source-only".into()))
         .collect()
+}
+
+fn read_designs(
+    repo: &AgentsRepo,
+    sources: &[LoadedResourceSource],
+    warnings: &mut Vec<String>,
+) -> Vec<DesignItem> {
+    let mut seen = BTreeSet::new();
+    let mut items = Vec::new();
+    let root = Path::new(&repo.root);
+    let root_design = root.join("DESIGN.md");
+    if root_design.is_file() {
+        read_design_file(
+            "Local",
+            &PathBuf::from(&repo.root),
+            "local",
+            &root_design,
+            &mut seen,
+            warnings,
+            &mut items,
+            &[],
+            &[],
+        );
+    }
+    let designs_dir = Path::new(&repo.paths.designs);
+    read_design_dir(
+        "Local",
+        &PathBuf::from(&repo.root),
+        "local",
+        designs_dir,
+        &mut seen,
+        warnings,
+        &mut items,
+        &[],
+        &[],
+    );
+
+    for source in sources {
+        let Some(designs_dir) = &source.designs_dir else {
+            for design_file in &source.design_files {
+                read_design_file(
+                    &source.name,
+                    &source.resolved_path,
+                    &source.source_kind,
+                    design_file,
+                    &mut seen,
+                    warnings,
+                    &mut items,
+                    &source.include_designs,
+                    &source.exclude_designs,
+                );
+            }
+            continue;
+        };
+        read_design_dir(
+            &source.name,
+            &source.resolved_path,
+            &source.source_kind,
+            designs_dir,
+            &mut seen,
+            warnings,
+            &mut items,
+            &source.include_designs,
+            &source.exclude_designs,
+        );
+        for design_file in &source.design_files {
+            read_design_file(
+                &source.name,
+                &source.resolved_path,
+                &source.source_kind,
+                design_file,
+                &mut seen,
+                warnings,
+                &mut items,
+                &source.include_designs,
+                &source.exclude_designs,
+            );
+        }
+    }
+
+    items
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_design_dir(
+    source_name: &str,
+    source_root: &PathBuf,
+    source_kind: &str,
+    dir: &Path,
+    seen: &mut BTreeSet<String>,
+    warnings: &mut Vec<String>,
+    items: &mut Vec<DesignItem>,
+    includes: &[String],
+    excludes: &[String],
+) {
+    if !dir.is_dir() {
+        return;
+    }
+    let design = dir.join("DESIGN.md");
+    if design.is_file() {
+        read_design_file(
+            source_name,
+            source_root,
+            source_kind,
+            &design,
+            seen,
+            warnings,
+            items,
+            includes,
+            excludes,
+        );
+    }
+    for file in list_design_files(dir) {
+        if file != design {
+            read_design_file(
+                source_name,
+                source_root,
+                source_kind,
+                &file,
+                seen,
+                warnings,
+                items,
+                includes,
+                excludes,
+            );
+        }
+    }
+    for name in repo::list_dirs(dir) {
+        let file = dir.join(name).join("DESIGN.md");
+        if file.is_file() {
+            read_design_file(
+                source_name,
+                source_root,
+                source_kind,
+                &file,
+                seen,
+                warnings,
+                items,
+                includes,
+                excludes,
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_design_file(
+    source_name: &str,
+    source_root: &PathBuf,
+    source_kind: &str,
+    file: &Path,
+    seen: &mut BTreeSet<String>,
+    warnings: &mut Vec<String>,
+    items: &mut Vec<DesignItem>,
+    includes: &[String],
+    excludes: &[String],
+) {
+    let text = repo::read_text(file).unwrap_or_default();
+    let frontmatter = repo::parse_frontmatter(&text);
+    let parent_name = file
+        .parent()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "DESIGN".into());
+    let item_name = frontmatter
+        .get("name")
+        .cloned()
+        .unwrap_or_else(|| parent_name.clone());
+    let relative_path = relative_source_path(source_root, file);
+    if !pattern_allowed(
+        &[&item_name, &parent_name, &relative_path],
+        includes,
+        excludes,
+    ) {
+        return;
+    }
+    let key = item_name.clone();
+    if !seen.insert(key.clone()) {
+        warnings.push(format!(
+            "Skipped design `{key}` from `{source_name}` because a local or earlier source design has the same name."
+        ));
+        return;
+    }
+    items.push(DesignItem {
+        name: item_name,
+        description: frontmatter.get("description").cloned().unwrap_or_default(),
+        path: repo::display_path(file),
+        file: repo::display_path(file),
+        source_name: source_name.into(),
+        source_path: repo::display_path(source_root),
+        source_kind: source_kind.into(),
+        frontmatter,
+        preview: truncate_preview(&text),
+    });
 }
 
 fn read_registry(repo: &AgentsRepo) -> McpRegistry {
@@ -1827,6 +2129,64 @@ mod tests {
         assert!(skill_names.contains("Taste Sweet"));
         assert!(skill_names.contains("Planner"));
         assert!(!skill_names.contains("Skip Me"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn build_state_loads_designs_from_configured_source() {
+        let root = temp_path("agents-manager-design-source-test");
+        let repo_root = root.join("repo");
+        let source_root = root.join("source");
+
+        fs::create_dir_all(repo_root.join("skills")).unwrap();
+        fs::create_dir_all(repo_root.join("commands")).unwrap();
+        fs::create_dir_all(repo_root.join("mcp")).unwrap();
+        fs::create_dir_all(source_root.join("examples/mobile")).unwrap();
+        fs::create_dir_all(source_root.join("examples/web")).unwrap();
+        fs::write(repo_root.join("AGENTS.md"), "# Test Agents\n").unwrap();
+        fs::write(repo_root.join("mcp/servers.json"), r#"{"servers":{}}"#).unwrap();
+        fs::write(
+            source_root.join("examples/mobile/DESIGN.md"),
+            "---\nname: Mobile Design\ndescription: Included design\n---\n\n# Mobile\n",
+        )
+        .unwrap();
+        fs::write(
+            source_root.join("examples/web/DESIGN.md"),
+            "---\nname: Web Design\ndescription: Excluded design\n---\n\n# Web\n",
+        )
+        .unwrap();
+        fs::write(
+            repo_root.join(SOURCES_FILENAME),
+            format!(
+                r#"{{
+  "sources": [
+    {{
+      "name": "design-source",
+      "path": "{}",
+      "skills": false,
+      "commands": false,
+      "designs": true,
+      "designsPath": "examples",
+      "includeDesigns": ["Mobile*"]
+    }}
+  ]
+}}"#,
+                source_root.to_string_lossy().replace('\\', "\\\\")
+            ),
+        )
+        .unwrap();
+
+        let state = build_state(Some(repo::display_path(&repo_root)));
+        let design_names: BTreeSet<String> = state
+            .designs
+            .iter()
+            .map(|design| design.name.clone())
+            .collect();
+
+        assert!(design_names.contains("Mobile Design"));
+        assert!(!design_names.contains("Web Design"));
+        assert_eq!(state.designs[0].source_kind, "external");
 
         let _ = fs::remove_dir_all(root);
     }
