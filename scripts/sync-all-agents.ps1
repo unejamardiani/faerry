@@ -2,8 +2,6 @@ param(
     [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [string]$HomeDir = $HOME,
     [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }),
-    [string]$AtlasDir = "",
-    [string]$CortexDir = "",
     [switch]$SkipClaude,
     [switch]$SkipOpenCode,
     [switch]$SkipCodex,
@@ -30,8 +28,6 @@ $LinkArgs = @(
     "-CodexHome", $CodexHome
 )
 
-if ($AtlasDir) { $LinkArgs += @("-AtlasDir", $AtlasDir) }
-if ($CortexDir) { $LinkArgs += @("-CortexDir", $CortexDir) }
 if ($SkipClaude) { $LinkArgs += "-SkipClaude" }
 if ($SkipOpenCode) { $LinkArgs += "-SkipOpenCode" }
 if ($SkipCodex) { $LinkArgs += "-SkipCodex" }

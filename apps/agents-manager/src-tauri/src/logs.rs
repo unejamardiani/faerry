@@ -30,7 +30,10 @@ pub fn append_log(entry: LogEntry) {
     }
     let path = logs_path();
     let _ = fs::create_dir_all(path.parent().unwrap_or(Path::new("")));
-    let _ = fs::write(&path, serde_json::to_string_pretty(&entries).unwrap_or_default());
+    let _ = fs::write(
+        &path,
+        serde_json::to_string_pretty(&entries).unwrap_or_default(),
+    );
 }
 
 pub fn list_logs() -> Vec<LogEntry> {
@@ -40,10 +43,6 @@ pub fn list_logs() -> Vec<LogEntry> {
 pub fn clear_logs() {
     let path = logs_path();
     let _ = fs::remove_file(&path);
-}
-
-pub fn to_script_result(entry: &LogEntry) -> (bool, Option<i32>) {
-    (entry.ok, entry.exit_code)
 }
 
 pub fn log_from_script_result(

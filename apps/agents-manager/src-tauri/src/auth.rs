@@ -55,43 +55,77 @@ fn check_claude_auth() -> (String, Option<String>) {
     match output {
         Ok(out) if out.status.success() => {
             let text = String::from_utf8_lossy(&out.stdout).to_string();
-            if text.contains("Not authenticated") || text.contains("requires login") || text.contains("credential") {
-                ("needs-auth".into(), Some("MCP server requires authentication. Run /mcp in Claude Code.".into()))
+            if text.contains("Not authenticated")
+                || text.contains("requires login")
+                || text.contains("credential")
+            {
+                (
+                    "needs-auth".into(),
+                    Some("MCP server requires authentication. Run /mcp in Claude Code.".into()),
+                )
             } else {
-                ("authenticated".into(), Some("Claude Code MCP list is available and shows the server.".into()))
+                (
+                    "authenticated".into(),
+                    Some("Claude Code MCP list is available and shows the server.".into()),
+                )
             }
         }
-        _ => ("unknown".into(), Some("Could not determine auth status. Run /mcp in Claude Code to verify.".into())),
+        _ => (
+            "unknown".into(),
+            Some("Could not determine auth status. Run /mcp in Claude Code to verify.".into()),
+        ),
     }
 }
 
 fn check_codex_auth() -> (String, Option<String>) {
-    let output = Command::new("codex").args(["mcp", "auth", "status"]).output();
+    let output = Command::new("codex")
+        .args(["mcp", "auth", "status"])
+        .output();
     match output {
         Ok(out) if out.status.success() => {
             let text = String::from_utf8_lossy(&out.stdout).to_string();
             if text.contains("unauthorized") || text.contains("needs") || text.contains("login") {
-                ("needs-auth".into(), Some("Codex reports the server needs authentication.".into()))
+                (
+                    "needs-auth".into(),
+                    Some("Codex reports the server needs authentication.".into()),
+                )
             } else {
-                ("authenticated".into(), Some("Codex reports authentication is configured.".into()))
+                (
+                    "authenticated".into(),
+                    Some("Codex reports authentication is configured.".into()),
+                )
             }
         }
-        _ => ("unknown".into(), Some("Codex auth status command not available. Check config manually.".into())),
+        _ => (
+            "unknown".into(),
+            Some("Codex auth status command not available. Check config manually.".into()),
+        ),
     }
 }
 
 fn check_opencode_auth() -> (String, Option<String>) {
-    let output = Command::new("opencode").args(["mcp", "auth", "status"]).output();
+    let output = Command::new("opencode")
+        .args(["mcp", "auth", "status"])
+        .output();
     match output {
         Ok(out) if out.status.success() => {
             let text = String::from_utf8_lossy(&out.stdout).to_string();
             if text.contains("unauthorized") || text.contains("needs") || text.contains("login") {
-                ("needs-auth".into(), Some("OpenCode reports the server needs authentication.".into()))
+                (
+                    "needs-auth".into(),
+                    Some("OpenCode reports the server needs authentication.".into()),
+                )
             } else {
-                ("authenticated".into(), Some("OpenCode reports authentication is configured.".into()))
+                (
+                    "authenticated".into(),
+                    Some("OpenCode reports authentication is configured.".into()),
+                )
             }
         }
-        _ => ("unknown".into(), Some("OpenCode auth status command not available. Check config manually.".into())),
+        _ => (
+            "unknown".into(),
+            Some("OpenCode auth status command not available. Check config manually.".into()),
+        ),
     }
 }
 
@@ -99,7 +133,11 @@ fn command_available(command: &str) -> bool {
     let result = if cfg!(windows) {
         Command::new("where").arg(command).output()
     } else {
-        Command::new("sh").args(["-c", &format!("command -v {}", command)]).output()
+        Command::new("sh")
+            .args(["-c", &format!("command -v {}", command)])
+            .output()
     };
-    result.map(|output| output.status.success()).unwrap_or(false)
+    result
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }

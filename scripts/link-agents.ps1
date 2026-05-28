@@ -2,8 +2,6 @@ param(
     [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [string]$HomeDir = $HOME,
     [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }),
-    [string]$AtlasDir = "",
-    [string]$CortexDir = "",
     [switch]$SkipClaude,
     [switch]$SkipOpenCode,
     [switch]$SkipCodex,
@@ -15,9 +13,7 @@ $ErrorActionPreference = "Stop"
 $AgentsHome = Join-Path $HomeDir ".agents"
 if (
     -not (Test-Path -LiteralPath (Join-Path $RepoRoot "AGENTS.md")) -or
-    -not (Test-Path -LiteralPath (Join-Path $RepoRoot "commands")) -or
-    -not (Test-Path -LiteralPath (Join-Path $RepoRoot "skills")) -or
-    -not (Test-Path -LiteralPath (Join-Path $RepoRoot "templates"))
+    -not (Test-Path -LiteralPath (Join-Path $RepoRoot "skills"))
 ) {
     throw "Repo root does not match the expected .agents layout: $RepoRoot"
 }
@@ -136,9 +132,7 @@ function Install-SharedAgents {
     }
 
     New-OrUpdateSymlink -Source (Join-Path $RepoRoot "AGENTS.md") -Target (Join-Path $AgentsHome "AGENTS.md") -Label "shared AGENTS.md"
-    New-OrUpdateSymlink -Source (Join-Path $RepoRoot "commands") -Target (Join-Path $AgentsHome "commands") -Label "shared commands"
     New-OrUpdateSymlink -Source (Join-Path $RepoRoot "skills") -Target (Join-Path $AgentsHome "skills") -Label "shared skills"
-    New-OrUpdateSymlink -Source (Join-Path $RepoRoot "templates") -Target (Join-Path $AgentsHome "templates") -Label "shared templates"
 }
 
 function Install-Claude {
@@ -147,7 +141,6 @@ function Install-Claude {
     Write-Host "Claude Code"
 
     New-OrUpdateSymlink -Source (Join-Path $AgentsHome "AGENTS.md") -Target (Join-Path $HomeDir ".claude/CLAUDE.md") -Label "Claude global context"
-    New-OrUpdateSymlink -Source (Join-Path $AgentsHome "commands") -Target (Join-Path $HomeDir ".claude/commands") -Label "Claude commands"
     New-OrUpdateSymlink -Source (Join-Path $AgentsHome "skills") -Target (Join-Path $HomeDir ".claude/skills") -Label "Claude skills"
 }
 
@@ -158,7 +151,6 @@ function Install-OpenCode {
 
     $OpenCodeHome = Join-Path $HomeDir ".config/opencode"
     New-OrUpdateSymlink -Source (Join-Path $AgentsHome "AGENTS.md") -Target (Join-Path $OpenCodeHome "AGENTS.md") -Label "OpenCode global context"
-    New-OrUpdateSymlink -Source (Join-Path $AgentsHome "commands") -Target (Join-Path $OpenCodeHome "commands") -Label "OpenCode commands"
     New-OrUpdateSymlink -Source (Join-Path $AgentsHome "skills") -Target (Join-Path $OpenCodeHome "skills") -Label "OpenCode skills"
 }
 
@@ -168,7 +160,6 @@ function Install-Codex {
     Write-Host "Codex"
 
     New-OrUpdateSymlink -Source (Join-Path $AgentsHome "AGENTS.md") -Target (Join-Path $CodexHome "AGENTS.md") -Label "Codex global context"
-    New-OrUpdateSymlink -Source (Join-Path $AgentsHome "commands") -Target (Join-Path $CodexHome "prompts") -Label "Codex prompts"
     New-OrUpdateSymlink -Source (Join-Path $AgentsHome "skills") -Target (Join-Path $CodexHome "skills") -Label "Codex skills"
 }
 
@@ -187,21 +178,6 @@ function Install-CopilotEnv {
     Write-Host "  dot-source $SnippetPath in shells that run github-copilot-cli"
 }
 
-function Install-VaultLink {
-    param(
-        [string]$Label,
-        [string]$VaultDir,
-        [string]$TemplatePath
-    )
-
-    if (-not $VaultDir) { return }
-
-    Write-Host ""
-    Write-Host "$Label vault"
-    New-OrUpdateSymlink -Source $TemplatePath -Target (Join-Path $VaultDir "AGENTS.md") -Label "$Label AGENTS.md"
-    New-OrUpdateSymlink -Source $TemplatePath -Target (Join-Path $VaultDir "CLAUDE.md") -Label "$Label CLAUDE.md"
-}
-
 Write-Host "agents repo linker"
 Write-Host "repo   $RepoRoot"
 Write-Host "target $HomeDir"
@@ -211,8 +187,6 @@ Install-Claude
 Install-OpenCode
 Install-Codex
 Install-CopilotEnv
-Install-VaultLink -Label "Atlas" -VaultDir $AtlasDir -TemplatePath (Join-Path $RepoRoot "templates/obsidian/AGENTS.atlas.md")
-Install-VaultLink -Label "Cortex" -VaultDir $CortexDir -TemplatePath (Join-Path $RepoRoot "templates/obsidian/AGENTS.cortex.md")
 
 Write-Host ""
 if ($script:BackupCount -gt 0) {

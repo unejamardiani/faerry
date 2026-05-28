@@ -1,30 +1,29 @@
 mod auth;
 mod bundled;
+mod logs;
+mod mcp_editor;
 mod models;
 mod preview;
+mod profiles;
 mod repo;
+mod script_versions;
 mod scripts;
 mod status;
-mod script_versions;
 mod validation;
-mod mcp_editor;
-mod logs;
-mod profiles;
 
 use models::{
-    AgentsMdInfo, AppState, CreateResult, DiffPreview, LogEntry, McpInstallStatus, McpRegistry,
-    McpRegistryEditResult, McpServerFormData, McpServerItem, PackageArtifact, PackageResult,
-    Profile, RepoImportPlan, RepoImportResult, RepoValidation, RuntimeInfo, ScriptPlan,
-    ScriptResult, ScriptVersionInfo, SeveritySummary, StructuredOutput, ToolStatus,
-    UpdateCheckResult, ValidationIssue,
+    AgentsMdInfo, AppState, CreateResult, DiffPreview, LogEntry, McpRegistryEditResult,
+    McpServerFormData, PackageArtifact, PackageResult, Profile, RepoImportPlan, RepoImportResult,
+    RepoValidation, RuntimeInfo, ScriptPlan, ScriptResult, ScriptVersionInfo, SelectiveSyncPlan,
+    StructuredOutput, UpdateCheckResult,
 };
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::UNIX_EPOCH;
-use serde_json::Value;
 
 #[tauri::command]
 fn get_state(repo_path: Option<String>) -> Result<AppState, String> {
@@ -56,13 +55,33 @@ fn choose_repo_path() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn plan_repo_import(source: String, destination: String) -> Result<RepoImportPlan, String> {
-    scripts::plan_repo_import(&source, &destination)
+fn plan_repo_import(
+    source: String,
+    destination: String,
+    branch: Option<String>,
+    shallow: Option<bool>,
+) -> Result<RepoImportPlan, String> {
+    scripts::plan_repo_import(
+        &source,
+        &destination,
+        branch.as_deref(),
+        shallow.unwrap_or(false),
+    )
 }
 
 #[tauri::command]
-async fn run_repo_import(source: String, destination: String) -> Result<RepoImportResult, String> {
-    scripts::run_repo_import(&source, &destination)
+async fn run_repo_import(
+    source: String,
+    destination: String,
+    branch: Option<String>,
+    shallow: Option<bool>,
+) -> Result<RepoImportResult, String> {
+    scripts::run_repo_import(
+        &source,
+        &destination,
+        branch.as_deref(),
+        shallow.unwrap_or(false),
+    )
 }
 
 #[tauri::command]
@@ -134,21 +153,41 @@ fn get_runtime_info(repo_path: Option<String>) -> Result<RuntimeInfo, String> {
 fn get_dependencies() -> BTreeMap<String, String> {
     let mut deps = BTreeMap::new();
     for cmd in &["node", "git", "curl", "claude", "codex", "opencode"] {
-        deps.insert(cmd.to_string(), if scripts::command_available(cmd) { "available" } else { "missing" }.to_string());
+        deps.insert(
+            cmd.to_string(),
+            if scripts::command_available(cmd) {
+                "available"
+            } else {
+                "missing"
+            }
+            .to_string(),
+        );
     }
     // Archive tools
     if cfg!(target_os = "macos") {
-        deps.insert("ditto".into(), if scripts::command_available("ditto") { "available" } else { "missing" }.into());
+        deps.insert(
+            "ditto".into(),
+            if scripts::command_available("ditto") {
+                "available"
+            } else {
+                "missing"
+            }
+            .into(),
+        );
     } else if cfg!(target_os = "windows") {
         deps.insert("powershell".into(), "available".into());
     } else {
-        deps.insert("unzip".into(), if scripts::command_available("unzip") { "available" } else { "missing" }.into());
+        deps.insert(
+            "unzip".into(),
+            if scripts::command_available("unzip") {
+                "available"
+            } else {
+                "missing"
+            }
+            .into(),
+        );
     }
     deps
-}
-
-fn is_repo_via_walk(path: &str) -> bool {
-    repo::is_agents_repo(path)
 }
 
 // --- Feature 4: Script Versions ---
@@ -184,7 +223,8 @@ fn parse_script_output(stdout: String, stderr: String, exit_code: Option<i32>) -
             changed.push(line.to_string());
         } else if lower.contains("backup") {
             backups.push(line.to_string());
-        } else if lower.contains("auth") || lower.contains("login") || lower.contains("credential") {
+        } else if lower.contains("auth") || lower.contains("login") || lower.contains("credential")
+        {
             auth_hints.push(line.to_string());
         } else if line.trim().is_empty() {
             continue;
@@ -210,8 +250,9 @@ fn parse_script_output(stdout: String, stderr: String, exit_code: Option<i32>) -
 // --- Feature 15: Repo Validation ---
 
 #[tauri::command]
-fn validate_repo(repo_path: String) -> Result<RepoValidation, String> {
-    Ok(validation::validate_repo(&repo_path))
+fn validate_repo(repo_path: Option<String>) -> Result<RepoValidation, String> {
+    let repo = repo::detect_repo_with_override(repo_path).map_err(|e| e.to_string())?;
+    Ok(validation::validate_repo(&repo.root))
 }
 
 // --- Feature 16: AGENTS.md Preview ---
@@ -282,8 +323,19 @@ fn clear_logs_cmd() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn log_action(action: String, repo_path: String, command: String, ok: bool, exit_code: Option<i32>, stdout: String, stderr: String, backups: Vec<String>) {
-    let entry = logs::log_from_script_result(&action, &repo_path, &command, ok, exit_code, &stdout, &stderr, &backups);
+fn log_action(
+    action: String,
+    repo_path: String,
+    command: String,
+    ok: bool,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    backups: Vec<String>,
+) {
+    let entry = logs::log_from_script_result(
+        &action, &repo_path, &command, ok, exit_code, &stdout, &stderr, &backups,
+    );
     logs::append_log(entry);
 }
 
@@ -295,20 +347,41 @@ fn validate_mcp_server(data: McpServerFormData) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn edit_mcp_server(registry_path: String, name: String, action: String, data: Option<McpServerFormData>) -> Result<McpRegistryEditResult, String> {
-    Ok(mcp_editor::edit_server(&registry_path, &name, &action, data.as_ref()))
+fn edit_mcp_server(
+    registry_path: String,
+    name: String,
+    action: String,
+    data: Option<McpServerFormData>,
+) -> Result<McpRegistryEditResult, String> {
+    Ok(mcp_editor::edit_server(
+        &registry_path,
+        &name,
+        &action,
+        data.as_ref(),
+    ))
 }
 
 // --- Feature 11: Skill Creation Wizard ---
 
 #[tauri::command]
-fn create_skill(repo_path: String, folder_name: String, skill_name: String, description: String, body: String) -> Result<CreateResult, String> {
+fn create_skill(
+    repo_path: String,
+    folder_name: String,
+    skill_name: String,
+    description: String,
+    body: String,
+) -> Result<CreateResult, String> {
     // Validate name is filesystem-safe
-    if !folder_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if !folder_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         return Ok(CreateResult {
             ok: false,
             path: String::new(),
-            message: "Folder name must contain only alphanumeric characters, hyphens, and underscores.".into(),
+            message:
+                "Folder name must contain only alphanumeric characters, hyphens, and underscores."
+                    .into(),
         });
     }
     if description.is_empty() {
@@ -324,7 +397,10 @@ fn create_skill(repo_path: String, folder_name: String, skill_name: String, desc
         return Ok(CreateResult {
             ok: false,
             path: String::new(),
-            message: format!("Skill folder already exists: {}", repo::display_path(&skill_dir)),
+            message: format!(
+                "Skill folder already exists: {}",
+                repo::display_path(&skill_dir)
+            ),
         });
     }
 
@@ -343,12 +419,23 @@ fn create_skill(repo_path: String, folder_name: String, skill_name: String, desc
 // --- Feature 12: Command Creation Wizard ---
 
 #[tauri::command]
-fn create_command(repo_path: String, command_name: String, description: String, argument_hint: String, body: String) -> Result<CreateResult, String> {
-    if !command_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+fn create_command(
+    repo_path: String,
+    command_name: String,
+    description: String,
+    argument_hint: String,
+    body: String,
+) -> Result<CreateResult, String> {
+    if !command_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         return Ok(CreateResult {
             ok: false,
             path: String::new(),
-            message: "Command name must contain only alphanumeric characters, hyphens, and underscores.".into(),
+            message:
+                "Command name must contain only alphanumeric characters, hyphens, and underscores."
+                    .into(),
         });
     }
     if description.is_empty() {
@@ -359,12 +446,17 @@ fn create_command(repo_path: String, command_name: String, description: String, 
         });
     }
 
-    let file_path = Path::new(&repo_path).join("commands").join(format!("{command_name}.md"));
+    let file_path = Path::new(&repo_path)
+        .join("commands")
+        .join(format!("{command_name}.md"));
     if file_path.exists() {
         return Ok(CreateResult {
             ok: false,
             path: String::new(),
-            message: format!("Command file already exists: {}", repo::display_path(&file_path)),
+            message: format!(
+                "Command file already exists: {}",
+                repo::display_path(&file_path)
+            ),
         });
     }
 
@@ -387,45 +479,6 @@ fn create_command(repo_path: String, command_name: String, description: String, 
 
 #[tauri::command]
 fn get_profiles(repo_path: Option<String>) -> Result<Vec<Profile>, String> {
-    let default_profiles = vec![
-        Profile {
-            name: "Work".into(),
-            description: "Full sync: all tools, all categories.".into(),
-            tools_enabled: vec!["claude-code".into(), "codex".into(), "opencode".into(), "github-copilot-cli".into()],
-            sync_globals: true,
-            sync_skills: true,
-            sync_commands: true,
-            sync_mcp: true,
-            selected_mcp_servers: vec![],
-            selected_skills: vec![],
-            selected_commands: vec![],
-        },
-        Profile {
-            name: "Personal".into(),
-            description: "Minimal sync: only Claude Code.".into(),
-            tools_enabled: vec!["claude-code".into()],
-            sync_globals: true,
-            sync_skills: true,
-            sync_commands: true,
-            sync_mcp: true,
-            selected_mcp_servers: vec![],
-            selected_skills: vec![],
-            selected_commands: vec![],
-        },
-        Profile {
-            name: "Minimal".into(),
-            description: "No sync: read-only mode.".into(),
-            tools_enabled: vec![],
-            sync_globals: false,
-            sync_skills: false,
-            sync_commands: false,
-            sync_mcp: false,
-            selected_mcp_servers: vec![],
-            selected_skills: vec![],
-            selected_commands: vec![],
-        },
-    ];
-
     // Try to read from repo if available
     if let Some(repo) = repo_path {
         let profiles_file = Path::new(&repo).join("profiles.json");
@@ -438,7 +491,7 @@ fn get_profiles(repo_path: Option<String>) -> Result<Vec<Profile>, String> {
         }
     }
 
-    Ok(default_profiles)
+    Ok(profiles::default_profiles())
 }
 
 #[tauri::command]
@@ -456,37 +509,44 @@ fn save_profiles(repo_path: String, profiles: Vec<Profile>) -> Result<CreateResu
 // --- Feature 19: Packaging ---
 
 #[tauri::command]
-fn package_claude_skills(repo_path: String) -> Result<PackageResult, String> {
+fn package_claude_skills(repo_path: Option<String>) -> Result<PackageResult, String> {
+    let repo = repo::detect_repo_with_override(repo_path).map_err(|e| e.to_string())?;
     let script = if cfg!(windows) {
         "package-claude-skills.ps1"
     } else {
         "package-claude-skills.sh"
     };
-    execute_package_script(&repo_path, script)
+    execute_package_script(&repo.root, script)
 }
 
 #[tauri::command]
-fn package_claude_extension(repo_path: String) -> Result<PackageResult, String> {
+fn package_claude_extension(repo_path: Option<String>) -> Result<PackageResult, String> {
+    let repo = repo::detect_repo_with_override(repo_path).map_err(|e| e.to_string())?;
     let script = if cfg!(windows) {
         "package-claude-extension.ps1"
     } else {
         "package-claude-extension.sh"
     };
-    execute_package_script(&repo_path, script)
+    execute_package_script(&repo.root, script)
 }
 
 fn execute_package_script(repo_path: &str, script_name: &str) -> Result<PackageResult, String> {
     let script_path = bundled::script_path(script_name)?;
     let mut cmd = if script_name.ends_with(".ps1") {
         let mut cmd = Command::new("powershell.exe");
-        cmd.args(["-ExecutionPolicy", "Bypass", "-File", &bundled::display_path(script_path)]);
+        cmd.args([
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            &bundled::display_path(script_path),
+        ]);
         cmd
     } else {
-        let mut cmd = Command::new(script_path);
-        cmd
+        Command::new(script_path)
     };
 
-    cmd.current_dir(repo_path).env("PORTABLE_AGENTS_REPO_ROOT", repo_path);
+    cmd.current_dir(repo_path)
+        .env("PORTABLE_AGENTS_REPO_ROOT", repo_path);
     let output = cmd.output().map_err(|e| e.to_string())?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -500,7 +560,10 @@ fn execute_package_script(repo_path: &str, script_name: &str) -> Result<PackageR
             let path_buf = Path::new(path_str);
             if !path_str.is_empty() && path_buf.exists() {
                 let size = path_buf.metadata().map(|m| m.len()).unwrap_or(0);
-                let name = path_buf.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let name = path_buf
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 artifacts.push(PackageArtifact {
                     name,
                     path: repo::display_path(path_buf),
@@ -512,7 +575,12 @@ fn execute_package_script(repo_path: &str, script_name: &str) -> Result<PackageR
 
     Ok(PackageResult {
         ok: output.status.success(),
-        message: if output.status.success() { "Packaging completed successfully." } else { "Packaging completed with errors." }.into(),
+        message: if output.status.success() {
+            "Packaging completed successfully."
+        } else {
+            "Packaging completed with errors."
+        }
+        .into(),
         artifacts,
         stdout,
         stderr,
@@ -527,11 +595,11 @@ fn check_for_updates() -> Result<UpdateCheckResult, String> {
     // TODO: In production, check GitHub releases or a version manifest endpoint
     // For now, return up-to-date status
     Ok(UpdateCheckResult {
-        current_version,
+        current_version: current_version.clone(),
         latest_version: None,
         update_url: Some("https://github.com/portable-agents/agents-manager/releases".into()),
         up_to_date: true,
-        note: "Update check requires a remote endpoint. Current: v{}".to_string(),
+        note: format!("Update check requires a remote endpoint. Current: v{current_version}."),
     })
 }
 
@@ -545,13 +613,18 @@ fn check_safety_guards(repo_path: Option<String>) -> Result<Vec<String>, String>
     // Check if repo path is in a cloud-synced directory
     let path_str = &repo.root;
     if validation::is_cloud_synced_path(path_str) {
-        warnings.push(format!("Repository is in a cloud-synced directory. This may cause symlink issues: {path_str}"));
+        warnings.push(format!(
+            "Repository is in a cloud-synced directory. This may cause symlink issues: {path_str}"
+        ));
     }
 
     // Check for OneDrive specifically (common issue on Windows)
     let home = Path::new(&repo.home);
     if home.components().any(|c| {
-        c.as_os_str().to_string_lossy().to_lowercase().contains("onedrive")
+        c.as_os_str()
+            .to_string_lossy()
+            .to_lowercase()
+            .contains("onedrive")
     }) {
         warnings.push("OneDrive detected in home directory. Symlinks may break.".into());
     }
@@ -560,7 +633,10 @@ fn check_safety_guards(repo_path: Option<String>) -> Result<Vec<String>, String>
     let target_paths: Vec<(&str, PathBuf)> = vec![
         ("claude-code", Path::new(&repo.home).join(".claude")),
         ("codex", PathBuf::from(&repo.codex_home)),
-        ("opencode", Path::new(&repo.home).join(".config").join("opencode")),
+        (
+            "opencode",
+            Path::new(&repo.home).join(".config").join("opencode"),
+        ),
     ];
     for (tool_id, target_dir) in &target_paths {
         if target_dir.exists() && !target_dir.is_symlink() {
@@ -574,9 +650,14 @@ fn check_safety_guards(repo_path: Option<String>) -> Result<Vec<String>, String>
         if let Ok(parsed) = serde_json::from_str::<Value>(&text) {
             if let Some(servers) = parsed.get("servers").and_then(Value::as_object) {
                 for (name, server) in servers {
-                    let enabled = server.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+                    let enabled = server
+                        .get("enabled")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true);
                     if !enabled {
-                        warnings.push(format!("MCP server '{name}' is currently disabled in the registry."));
+                        warnings.push(format!(
+                            "MCP server '{name}' is currently disabled in the registry."
+                        ));
                     }
                 }
             }
@@ -584,6 +665,48 @@ fn check_safety_guards(repo_path: Option<String>) -> Result<Vec<String>, String>
     }
 
     Ok(warnings)
+}
+
+#[tauri::command]
+fn plan_selective_sync(
+    repo_path: Option<String>,
+    tools: Vec<String>,
+    categories: Vec<String>,
+) -> Result<SelectiveSyncPlan, String> {
+    let repo = repo::detect_repo_with_override(repo_path).map_err(|e| e.to_string())?;
+    let mut plans = Vec::new();
+    let mut warnings = Vec::new();
+
+    let wants_links = categories
+        .iter()
+        .any(|category| ["globals", "skills", "commands"].contains(&category.as_str()));
+    let wants_mcps = categories.iter().any(|category| category == "mcps");
+
+    if wants_links {
+        warnings.push("Selective link sync needs script-level skip flags. Current bundled script can only link globals, skills, commands, and Copilot env together.".into());
+        plans.push(scripts::plan_action(&repo, "linkAgents")?);
+    }
+
+    if wants_mcps {
+        for tool in tools {
+            match tool.as_str() {
+                "claude-code" => plans.push(scripts::plan_action(&repo, "syncClaudeCode")?),
+                "codex" => plans.push(scripts::plan_action(&repo, "syncCodex")?),
+                "opencode" => plans.push(scripts::plan_action(&repo, "syncOpenCode")?),
+                "github-copilot-cli" => {
+                    warnings.push("GitHub Copilot CLI has no MCP sync target.".into())
+                }
+                other => warnings.push(format!("Unknown selective sync tool: {other}.")),
+            }
+        }
+    }
+
+    Ok(SelectiveSyncPlan {
+        title: "Selective Sync Plan".into(),
+        supported: warnings.is_empty() || plans.iter().any(|plan| plan.action.starts_with("sync")),
+        plans,
+        warnings,
+    })
 }
 
 pub fn run() {
@@ -628,6 +751,8 @@ pub fn run() {
             check_for_updates,
             // Feature 22: Safety Guardrails
             check_safety_guards,
+            // Feature 14: Selective Sync
+            plan_selective_sync,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agents Manager");

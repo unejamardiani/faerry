@@ -8,7 +8,12 @@ pub fn default_profiles() -> Vec<Profile> {
         Profile {
             name: "Work".into(),
             description: "Full sync: all tools, all categories.".into(),
-            tools_enabled: vec!["claude-code".into(), "codex".into(), "opencode".into(), "github-copilot-cli".into()],
+            tools_enabled: vec![
+                "claude-code".into(),
+                "codex".into(),
+                "opencode".into(),
+                "github-copilot-cli".into(),
+            ],
             sync_globals: true,
             sync_skills: true,
             sync_commands: true,

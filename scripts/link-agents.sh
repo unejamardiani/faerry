@@ -15,8 +15,6 @@ SKIP_CLAUDE=0
 SKIP_OPENCODE=0
 SKIP_CODEX=0
 SKIP_COPILOT=0
-ATLAS_DIR=""
-CORTEX_DIR=""
 BACKUP_COUNT=0
 
 usage() {
@@ -31,8 +29,6 @@ Options:
   --repo-root PATH     Override the repository root.
   --home PATH          Override the target home directory.
   --codex-home PATH    Override the Codex home directory.
-  --atlas-dir PATH     Optionally link Atlas vault AGENTS.md and CLAUDE.md.
-  --cortex-dir PATH    Optionally link Cortex vault AGENTS.md and CLAUDE.md.
   --skip-claude        Do not link Claude Code folders.
   --skip-opencode      Do not link OpenCode folders.
   --skip-codex         Do not link Codex folders.
@@ -57,14 +53,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --codex-home)
       CODEX_ROOT="$2"
-      shift 2
-      ;;
-    --atlas-dir)
-      ATLAS_DIR="$2"
-      shift 2
-      ;;
-    --cortex-dir)
-      CORTEX_DIR="$2"
       shift 2
       ;;
     --skip-claude)
@@ -100,7 +88,7 @@ if [[ -z "$HOME_DIR" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$REPO_ROOT/AGENTS.md" || ! -d "$REPO_ROOT/commands" || ! -d "$REPO_ROOT/skills" || ! -d "$REPO_ROOT/templates" ]]; then
+if [[ ! -f "$REPO_ROOT/AGENTS.md" || ! -d "$REPO_ROOT/skills" ]]; then
   echo "Repo root does not match the expected .agents layout: $REPO_ROOT" >&2
   exit 1
 fi
@@ -180,9 +168,7 @@ install_shared_agents() {
 
   mkdir -p "$AGENTS_HOME"
   link_path "$REPO_ROOT/AGENTS.md" "$AGENTS_HOME/AGENTS.md" "shared AGENTS.md"
-  link_path "$REPO_ROOT/commands" "$AGENTS_HOME/commands" "shared commands"
   link_path "$REPO_ROOT/skills" "$AGENTS_HOME/skills" "shared skills"
-  link_path "$REPO_ROOT/templates" "$AGENTS_HOME/templates" "shared templates"
 }
 
 install_claude() {
@@ -190,7 +176,6 @@ install_claude() {
   echo ""
   echo "Claude Code"
   link_path "$AGENTS_HOME/AGENTS.md" "$HOME_DIR/.claude/CLAUDE.md" "Claude global context"
-  link_path "$AGENTS_HOME/commands" "$HOME_DIR/.claude/commands" "Claude commands"
   link_path "$AGENTS_HOME/skills" "$HOME_DIR/.claude/skills" "Claude skills"
 }
 
@@ -199,7 +184,6 @@ install_opencode() {
   echo ""
   echo "OpenCode"
   link_path "$AGENTS_HOME/AGENTS.md" "$HOME_DIR/.config/opencode/AGENTS.md" "OpenCode global context"
-  link_path "$AGENTS_HOME/commands" "$HOME_DIR/.config/opencode/commands" "OpenCode commands"
   link_path "$AGENTS_HOME/skills" "$HOME_DIR/.config/opencode/skills" "OpenCode skills"
 }
 
@@ -208,7 +192,6 @@ install_codex() {
   echo ""
   echo "Codex"
   link_path "$AGENTS_HOME/AGENTS.md" "$CODEX_ROOT/AGENTS.md" "Codex global context"
-  link_path "$AGENTS_HOME/commands" "$CODEX_ROOT/prompts" "Codex prompts"
   link_path "$AGENTS_HOME/skills" "$CODEX_ROOT/skills" "Codex skills"
 }
 
@@ -229,19 +212,6 @@ EOF
   echo "  source $snippet_path in shells that run github-copilot-cli"
 }
 
-install_vault_link() {
-  local label=$1
-  local vault_dir=$2
-  local template=$3
-
-  [[ -z "$vault_dir" ]] && return
-
-  echo ""
-  echo "$label vault"
-  link_path "$template" "$vault_dir/AGENTS.md" "$label AGENTS.md"
-  link_path "$template" "$vault_dir/CLAUDE.md" "$label CLAUDE.md"
-}
-
 echo "agents repo linker"
 echo "repo   $REPO_ROOT"
 echo "target $HOME_DIR"
@@ -251,8 +221,6 @@ install_claude
 install_opencode
 install_codex
 install_copilot_env
-install_vault_link "Atlas" "$ATLAS_DIR" "$REPO_ROOT/templates/obsidian/AGENTS.atlas.md"
-install_vault_link "Cortex" "$CORTEX_DIR" "$REPO_ROOT/templates/obsidian/AGENTS.cortex.md"
 
 echo ""
 if [[ "$BACKUP_COUNT" -gt 0 ]]; then

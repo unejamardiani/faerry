@@ -24,14 +24,44 @@ type SkillItem = {
   description: string;
   path: string;
   file: string;
+  sourceName: string;
+  sourcePath: string;
+  sourceKind: string;
+  frontmatter: Record<string, string>;
+  preview: string;
   installs: Record<string, string>;
 };
 
 type CommandItem = {
   name: string;
   description: string;
+  argumentHint: string;
   path: string;
+  sourceName: string;
+  sourcePath: string;
+  sourceKind: string;
+  frontmatter: Record<string, string>;
+  preview: string;
   installs: Record<string, string>;
+};
+
+type ResourceSourceStatus = {
+  name: string;
+  path: string;
+  resolvedPath: string;
+  enabled: boolean;
+  resources: string[];
+  status: string;
+  message: string;
+};
+
+type SourceConfigStatus = {
+  path: string;
+  exists: boolean;
+  valid: boolean;
+  error?: string;
+  sources: ResourceSourceStatus[];
+  warnings: string[];
 };
 
 type McpServer = {
@@ -42,8 +72,11 @@ type McpServer = {
   url: string;
   command: string;
   args: string[];
+  hasHeaders: boolean;
+  hasEnvironment: boolean;
   enabled: boolean;
   targets: Record<string, boolean>;
+  rawJson: string;
 };
 
 type McpInstallStatus = {
@@ -52,6 +85,8 @@ type McpInstallStatus = {
   status: string;
   path: string;
   message: string;
+  authStatus?: string;
+  authCommand?: string;
 };
 
 type AppState = {
@@ -64,6 +99,7 @@ type AppState = {
   };
   repoError?: string;
   generatedAt: string;
+  sourceConfig: SourceConfigStatus;
   registry: {
     valid: boolean;
     path: string;
@@ -100,6 +136,8 @@ type RepoImportPlan = {
   source: string;
   destination: string;
   sourceType: string;
+  branch?: string;
+  shallow: boolean;
   displayCommand: string;
   affectedPaths: string[];
   note: string;
@@ -255,7 +293,14 @@ type StructuredOutput = {
   exitCode?: number;
 };
 
-const views = ["Dashboard", "Skills", "Commands", "MCP Servers", "Tools", "About", "Validation", "Editor", "Logs", "Profiles"] as const;
+type SelectiveSyncPlan = {
+  title: string;
+  supported: boolean;
+  plans: ScriptPlan[];
+  warnings: string[];
+};
+
+const views = ["Dashboard", "Skills", "Commands", "MCP Servers", "Tools", "Diffs", "Backups", "About", "Validation", "Editor", "Logs", "Profiles"] as const;
 type View = (typeof views)[number];
 
 const actions = [
@@ -292,11 +337,15 @@ function App() {
   const [selectedCommand, setSelectedCommand] = useState<CommandItem | null>(null);
   const [selectedMcp, setSelectedMcp] = useState<McpServer | null>(null);
   const [structuredOutput, setStructuredOutput] = useState<StructuredOutput | null>(null);
+  const [diffPreview, setDiffPreview] = useState<DiffPreview | null>(null);
+  const [diffChangedOnly, setDiffChangedOnly] = useState(true);
+  const [lastRefreshed, setLastRefreshed] = useState("");
 
   async function refresh(pathOverride = repoPath) {
     setLoading(true);
     try {
       setState(await invoke<AppState>("get_state", { repoPath: pathOverride || null }));
+      setLastRefreshed(new Date().toLocaleString());
     } catch (error) {
       setOutput(String(error));
       setMeta("Failed to load state.");
@@ -359,9 +408,15 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const timer = window.setInterval(() => refresh(), 8000);
+    return () => window.clearInterval(timer);
+  }, [repoPath]);
+
+  useEffect(() => {
     if (view === "About") loadAboutInfo();
-    if (view === "Logs") loadLogs();
+    if (view === "Logs" || view === "Backups") loadLogs();
     if (view === "Profiles") loadProfiles();
+    if (view === "Diffs" && !diffPreview) loadDiffPreview();
   }, [view]);
 
   async function reviewAction(action: string) {
@@ -439,12 +494,12 @@ function App() {
     setMeta("Using automatic repo detection.");
   }
 
-  async function runRepoImport(source: string, destination: string) {
+  async function runRepoImport(source: string, destination: string, branch?: string, shallow?: boolean) {
     setImportOpen(false);
     setMeta("Importing repo...");
     setOutput("Running import...");
     try {
-      const result = await invoke<RepoImportResult>("run_repo_import", { source, destination });
+      const result = await invoke<RepoImportResult>("run_repo_import", { source, destination, branch: branch || null, shallow: !!shallow });
       setMeta(result.ok ? "Repo import completed." : "Repo import finished with errors.");
       setOutput(formatImportResult(result));
       if (result.ok && result.repoPath) {
@@ -487,7 +542,28 @@ function App() {
     } catch {}
   }
 
+  async function loadDiffPreview(action = "dryRunAll") {
+    try {
+      setDiffPreview(await invoke<DiffPreview>("preview_action", { action, repoPath: repoPath || null }));
+      setMeta("Diff preview refreshed.");
+    } catch (error) {
+      setOutput(String(error));
+      setMeta("Diff preview failed.");
+    }
+  }
+
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMeta("Copied to clipboard.");
+    } catch (error) {
+      setMeta("Copy failed.");
+      setOutput(String(error));
+    }
+  }
+
   const toolById = useMemo(() => Object.fromEntries((state?.tools ?? []).map((tool: ToolStatus) => [tool.id, tool])), [state]);
+  const effectiveRepoPath = state?.repo?.root ?? repoPath;
 
   return (
     <div className="appShell">
@@ -540,15 +616,17 @@ function App() {
         ) : (
           <>
             {view === "Dashboard" && <Dashboard state={state} toolById={toolById} onAction={reviewAction} />}
-            {view === "Skills" && <Skills state={state} openPath={openPath} />}
-            {view === "Commands" && <Commands state={state} openPath={openPath} />}
-            {view === "MCP Servers" && <Mcps state={state} onAction={reviewAction} openPath={openPath} />}
+            {view === "Skills" && <Skills state={state} selected={selectedSkill} onSelect={setSelectedSkill} openPath={openPath} copyText={copyText} />}
+            {view === "Commands" && <Commands state={state} selected={selectedCommand} onSelect={setSelectedCommand} openPath={openPath} copyText={copyText} />}
+            {view === "MCP Servers" && <Mcps state={state} selected={selectedMcp} onSelect={setSelectedMcp} onAction={reviewAction} openPath={openPath} copyText={copyText} />}
             {view === "Tools" && <Tools state={state} onAction={reviewAction} openPath={openPath} />}
-            {view === "About" && <About runtimeInfo={runtimeInfo} scriptVersions={scriptVersions} agentsMdInfo={agentsMdInfo} safetyWarnings={safetyWarnings} updateResult={updateResult} checkingUpdate={checkingUpdate} onCheckUpdates={checkForUpdates} onOpenAgentsMd={openAgentsMd} />}
+            {view === "Diffs" && <Diffs preview={diffPreview} changedOnly={diffChangedOnly} onChangedOnly={setDiffChangedOnly} onPreview={loadDiffPreview} openPath={openPath} copyText={copyText} />}
+            {view === "Backups" && <Backups logs={logs} onRefresh={loadLogs} openPath={openPath} copyText={copyText} />}
+            {view === "About" && <About runtimeInfo={runtimeInfo} scriptVersions={scriptVersions} agentsMdInfo={agentsMdInfo} sourceConfig={state.sourceConfig} safetyWarnings={safetyWarnings} updateResult={updateResult} checkingUpdate={checkingUpdate} onCheckUpdates={checkForUpdates} onOpenAgentsMd={openAgentsMd} copyText={copyText} />}
             {view === "Validation" && <Validation onValidate={validateRepo} repoValidation={repoValidation} validating={validating} />}
             {view === "Logs" && <Logs logs={logs} onClear={clearLogs} onRefresh={loadLogs} />}
             {view === "Profiles" && <Profiles profiles={profiles} />}
-            {view === "Editor" && <Editor state={state} repoPath={repoPath} onRefresh={refresh} />}
+            {view === "Editor" && <Editor state={state} repoPath={effectiveRepoPath} onRefresh={refresh} />}
           </>
         )}
 
@@ -556,13 +634,13 @@ function App() {
           <div className="panelHeader">
             <div>
               <h2>Command Output</h2>
-              <p>{meta}</p>
+              <p>{meta}{lastRefreshed ? ` Last refreshed: ${lastRefreshed}` : ""}</p>
             </div>
             <button className="ghostButton" onClick={() => setOutput("")}>
               Clear
             </button>
           </div>
-          <pre>{output}</pre>
+          {structuredOutput ? <StructuredOutputView output={structuredOutput} /> : <pre>{output}</pre>}
         </section>
       </main>
 
@@ -634,121 +712,255 @@ function Dashboard({ state, toolById, onAction }: { state: AppState; toolById: R
   );
 }
 
-function Skills({ state, openPath }: { state: AppState; openPath: (path: string) => void }) {
+function Skills({
+  state,
+  selected,
+  onSelect,
+  openPath,
+  copyText,
+}: {
+  state: AppState;
+  selected: SkillItem | null;
+  onSelect: (skill: SkillItem) => void;
+  openPath: (path: string) => void;
+  copyText: (text: string) => void;
+}) {
+  const current = selected ?? state.skills[0] ?? null;
   return (
-    <Panel title="Skills" subtitle={`Read from ${state.repo?.paths.skills}`}>
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Description</th>
-            <th>Claude Code</th>
-            <th>Codex</th>
-            <th>OpenCode</th>
-            <th>Path</th>
-          </tr>
-        </thead>
-        <tbody>
-          {state.skills.map((skill) => (
-            <tr key={skill.path}>
-              <td>{skill.name}</td>
-              <td className="description">{skill.description || "No frontmatter description."}</td>
-              <td><StatusPill value={skill.installs["claude-code"]} /></td>
-              <td><StatusPill value={skill.installs.codex} /></td>
-              <td><StatusPill value={skill.installs.opencode} /></td>
-              <td>
-                <button className="smallButton" onClick={() => openPath(skill.file)}>Open</button>
-                <div className="path">{skill.path}</div>
-              </td>
+    <div className="splitView">
+      <Panel title="Skills" subtitle={`Read from ${state.repo?.paths.skills}${state.sourceConfig.sources.length ? ` plus ${state.sourceConfig.sources.length} configured source${state.sourceConfig.sources.length === 1 ? "" : "s"}` : ""}`}>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Source</th>
+              <th>Description</th>
+              <th>Claude Code</th>
+              <th>Codex</th>
+              <th>OpenCode</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </Panel>
+          </thead>
+          <tbody>
+            {state.skills.map((skill) => (
+              <tr key={skill.path} className={current?.path === skill.path ? "selectedRow" : ""} onClick={() => onSelect(skill)}>
+                <td>{skill.name}</td>
+                <td>
+                  <StatusPill value={skill.sourceKind} />
+                  <div className="path">{skill.sourceName}</div>
+                </td>
+                <td className="description">{skill.description || "No frontmatter description."}</td>
+                <td><StatusPill value={skill.installs["claude-code"]} /></td>
+                <td><StatusPill value={skill.installs.codex} /></td>
+                <td><StatusPill value={skill.installs.opencode} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Panel>
+      {current && (
+        <Panel title="Skill Detail" subtitle={current.name}>
+          <div className="detailPane">
+            <Field label="Description">{current.description || "No description."}</Field>
+            <Field label="Source">
+              <StatusPill value={current.sourceKind} />
+              <div className="path">{current.sourceName}</div>
+              <div className="path">{current.sourcePath}</div>
+            </Field>
+            <Field label="Path"><div className="path">{current.path}</div></Field>
+            <Field label="SKILL.md"><div className="path">{current.file}</div></Field>
+            <Field label="Installed">
+              <div className="buttonRow">
+                {Object.entries(current.installs).map(([tool, status]) => <StatusPill key={tool} value={`${tool}:${status}`} />)}
+              </div>
+            </Field>
+            <Field label="Frontmatter"><pre className="fieldDiff">{JSON.stringify(current.frontmatter, null, 2)}</pre></Field>
+            <Field label="Preview"><pre className="previewText">{current.preview || "<empty>"}</pre></Field>
+            <div className="buttonRow padded compact">
+              <button className="ghostButton" onClick={() => openPath(current.file)}>Open SKILL.md</button>
+              <button className="ghostButton" onClick={() => openPath(current.path)}>Open Folder</button>
+              <button className="ghostButton" onClick={() => copyText(current.path)}>Copy Path</button>
+            </div>
+          </div>
+        </Panel>
+      )}
+    </div>
   );
 }
 
-function Commands({ state, openPath }: { state: AppState; openPath: (path: string) => void }) {
+function Commands({
+  state,
+  selected,
+  onSelect,
+  openPath,
+  copyText,
+}: {
+  state: AppState;
+  selected: CommandItem | null;
+  onSelect: (command: CommandItem) => void;
+  openPath: (path: string) => void;
+  copyText: (text: string) => void;
+}) {
+  const current = selected ?? state.commands[0] ?? null;
   return (
-    <Panel title="Commands" subtitle={`Read from ${state.repo?.paths.commands}`}>
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Description</th>
-            <th>Claude Code</th>
-            <th>Codex Prompts</th>
-            <th>OpenCode</th>
-            <th>Path</th>
-          </tr>
-        </thead>
-        <tbody>
-          {state.commands.map((command) => (
-            <tr key={command.path}>
-              <td>/{command.name}</td>
-              <td className="description">{command.description || "No frontmatter description."}</td>
-              <td><StatusPill value={command.installs["claude-code"]} /></td>
-              <td><StatusPill value={command.installs.codex} /></td>
-              <td><StatusPill value={command.installs.opencode} /></td>
-              <td>
-                <button className="smallButton" onClick={() => openPath(command.path)}>Open</button>
-                <div className="path">{command.path}</div>
-              </td>
+    <div className="splitView">
+      <Panel title="Commands" subtitle={`Read from ${state.repo?.paths.commands}${state.sourceConfig.sources.length ? ` plus ${state.sourceConfig.sources.length} configured source${state.sourceConfig.sources.length === 1 ? "" : "s"}` : ""}`}>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Source</th>
+              <th>Description</th>
+              <th>Claude Code</th>
+              <th>Codex Prompts</th>
+              <th>OpenCode</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </Panel>
+          </thead>
+          <tbody>
+            {state.commands.map((command) => (
+              <tr key={command.path} className={current?.path === command.path ? "selectedRow" : ""} onClick={() => onSelect(command)}>
+                <td>/{command.name}</td>
+                <td>
+                  <StatusPill value={command.sourceKind} />
+                  <div className="path">{command.sourceName}</div>
+                </td>
+                <td className="description">{command.description || "No frontmatter description."}</td>
+                <td><StatusPill value={command.installs["claude-code"]} /></td>
+                <td><StatusPill value={command.installs.codex} /></td>
+                <td><StatusPill value={command.installs.opencode} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Panel>
+      {current && (
+        <Panel title="Command Detail" subtitle={`/${current.name}`}>
+          <div className="detailPane">
+            <Field label="Description">{current.description || "No description."}</Field>
+            <Field label="Argument Hint">{current.argumentHint || "None"}</Field>
+            <Field label="Source">
+              <StatusPill value={current.sourceKind} />
+              <div className="path">{current.sourceName}</div>
+              <div className="path">{current.sourcePath}</div>
+            </Field>
+            <Field label="Path"><div className="path">{current.path}</div></Field>
+            <Field label="Installed">
+              <div className="buttonRow">
+                {Object.entries(current.installs).map(([tool, status]) => <StatusPill key={tool} value={`${tool}:${status}`} />)}
+              </div>
+            </Field>
+            <Field label="Frontmatter"><pre className="fieldDiff">{JSON.stringify(current.frontmatter, null, 2)}</pre></Field>
+            <Field label="Preview"><pre className="previewText">{current.preview || "<empty>"}</pre></Field>
+            <div className="buttonRow padded compact">
+              <button className="ghostButton" onClick={() => openPath(current.path)}>Open Command</button>
+              <button className="ghostButton" onClick={() => state.repo?.paths.commands && openPath(state.repo.paths.commands)}>Open Folder</button>
+              <button className="ghostButton" onClick={() => copyText(current.path)}>Copy Path</button>
+            </div>
+          </div>
+        </Panel>
+      )}
+    </div>
   );
 }
 
-function Mcps({ state, onAction, openPath }: { state: AppState; onAction: (action: string) => void; openPath: (path: string) => void }) {
+function Mcps({
+  state,
+  selected,
+  onSelect,
+  onAction,
+  openPath,
+  copyText,
+}: {
+  state: AppState;
+  selected: McpServer | null;
+  onSelect: (server: McpServer) => void;
+  onAction: (action: string) => void;
+  openPath: (path: string) => void;
+  copyText: (text: string) => void;
+}) {
+  const current = selected ?? state.registry.servers[0] ?? null;
   return (
     <>
-      <Panel title="MCP Servers" subtitle={`Registry: ${state.registry.path}`}>
-        <div className="buttonRow padded compact">
-          <button className="ghostButton" onClick={() => openPath(state.registry.path)}>Open Registry</button>
-          <button className="primaryButton" onClick={() => onAction("dryRunMcps")}>Dry Run MCPs</button>
-          <button className="primaryButton" onClick={() => onAction("syncMcps")}>Sync MCPs</button>
-        </div>
-        {!state.registry.valid ? (
-          <div className="empty">{state.registry.error}</div>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Server</th>
-                <th>Type</th>
-                <th>Endpoint</th>
-                <th>Enabled</th>
-                <th>Targets</th>
-                <th>Claude Code</th>
-                <th>Codex</th>
-                <th>OpenCode</th>
-                <th>Auth</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.registry.servers.map((server) => (
-                <tr key={server.name}>
-                  <td>
-                    {server.name}
-                    <div className="description">{server.description}</div>
-                  </td>
-                  <td>{server.serverType}</td>
-                  <td className="path">{server.url || [server.command, ...server.args].join(" ")}</td>
-                  <td><StatusPill value={server.enabled ? "enabled" : "disabled"} /></td>
-                  <td>{Object.entries(server.targets).filter(([, enabled]) => enabled !== false).map(([target]) => target).join(", ")}</td>
-                  <td><McpCell status={findMcp(state, "claude-code", server.name)} /></td>
-                  <td><McpCell status={findMcp(state, "codex", server.name)} /></td>
-                  <td><McpCell status={findMcp(state, "opencode", server.name)} /></td>
-                  <td><StatusPill value="unknown" /></td>
+      <div className="splitView">
+        <Panel title="MCP Servers" subtitle={`Registry: ${state.registry.path}`}>
+          <div className="buttonRow padded compact">
+            <button className="ghostButton" onClick={() => openPath(state.registry.path)}>Open Registry</button>
+            <button className="primaryButton" onClick={() => onAction("dryRunMcps")}>Dry Run MCPs</button>
+            <button className="primaryButton" onClick={() => onAction("syncMcps")}>Sync MCPs</button>
+          </div>
+          {!state.registry.valid ? (
+            <div className="empty">{state.registry.error}</div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Server</th>
+                  <th>Type</th>
+                  <th>Endpoint</th>
+                  <th>Enabled</th>
+                  <th>Targets</th>
+                  <th>Claude Code</th>
+                  <th>Codex</th>
+                  <th>OpenCode</th>
+                  <th>Auth</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {state.registry.servers.map((server) => {
+                  const statuses = ["claude-code", "codex", "opencode"].map((tool) => findMcp(state, tool, server.name));
+                  const auth = statuses.find((status) => status?.authStatus && status.authStatus !== "not-supported")?.authStatus ?? "unknown";
+                  return (
+                    <tr key={server.name} className={current?.name === server.name ? "selectedRow" : ""} onClick={() => onSelect(server)}>
+                      <td>
+                        {server.name}
+                        <div className="description">{server.description}</div>
+                      </td>
+                      <td>{server.serverType}</td>
+                      <td className="path">{server.url || [server.command, ...server.args].join(" ")}</td>
+                      <td><StatusPill value={server.enabled ? "enabled" : "disabled"} /></td>
+                      <td>{Object.entries(server.targets).filter(([, enabled]) => enabled !== false).map(([target]) => target).join(", ")}</td>
+                      <td><McpCell status={findMcp(state, "claude-code", server.name)} /></td>
+                      <td><McpCell status={findMcp(state, "codex", server.name)} /></td>
+                      <td><McpCell status={findMcp(state, "opencode", server.name)} /></td>
+                      <td><StatusPill value={auth} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Panel>
+        {current && (
+          <Panel title="MCP Detail" subtitle={current.name}>
+            <div className="detailPane">
+              <Field label="Description">{current.description || "No description."}</Field>
+              <Field label="Type / Transport">{current.serverType} / {current.transport}</Field>
+              <Field label="Endpoint"><div className="path">{current.url || [current.command, ...current.args].join(" ")}</div></Field>
+              <Field label="Secrets/Headers">{current.hasHeaders ? "headers present" : "no headers"}; {current.hasEnvironment ? "environment present" : "no environment"}</Field>
+              <Field label="Targets">{Object.entries(current.targets).map(([target, enabled]) => `${target}:${enabled}`).join(", ") || "All/default"}</Field>
+              <Field label="Install/Auth">
+                <div className="statusGrid">
+                  {["claude-code", "codex", "opencode"].map((tool) => {
+                    const status = findMcp(state, tool, current.name);
+                    return (
+                      <div key={tool}>
+                        <strong>{labelize(tool)}</strong>
+                        <McpCell status={status} />
+                        {status?.authCommand && <div className="path">{status.authCommand}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </Field>
+              <Field label="Raw JSON"><pre className="fieldDiff">{current.rawJson}</pre></Field>
+              <div className="buttonRow padded compact">
+                <button className="ghostButton" onClick={() => openPath(state.registry.path)}>Open Registry</button>
+                <button className="ghostButton" onClick={() => copyText(current.rawJson)}>Copy Server JSON</button>
+                <button className="ghostButton" onClick={() => copyText(findMcp(state, "codex", current.name)?.authCommand ?? `codex mcp login ${current.name}`)}>Copy Auth Command</button>
+              </div>
+            </div>
+          </Panel>
         )}
-      </Panel>
+      </div>
       <Panel title="Manual Auth Hints" subtitle="Run after MCP sync when the target tool requires login.">
         <div className="hintGrid">
           <code>codex mcp login atlassian</code>
@@ -803,25 +1015,119 @@ function Tools({ state, onAction, openPath }: { state: AppState; onAction: (acti
   );
 }
 
+function Diffs({
+  preview,
+  changedOnly,
+  onChangedOnly,
+  onPreview,
+  openPath,
+  copyText,
+}: {
+  preview: DiffPreview | null;
+  changedOnly: boolean;
+  onChangedOnly: (value: boolean) => void;
+  onPreview: (action?: string) => void;
+  openPath: (path: string) => void;
+  copyText: (text: string) => void;
+}) {
+  const sections = (preview?.sections ?? []).filter((section) => !changedOnly || section.status !== "unchanged");
+  return (
+    <Panel title="Diff Preview" subtitle="Inspect expected changes without opening the run dialog.">
+      <div className="buttonRow padded compact">
+        <button className="primaryButton" onClick={() => onPreview("dryRunAll")}>Preview All</button>
+        <button className="ghostButton" onClick={() => onPreview("dryRunMcps")}>Preview MCPs</button>
+        <button className="ghostButton" onClick={() => onPreview("linkAgents")}>Preview Links</button>
+        <button className="ghostButton" onClick={() => onChangedOnly(!changedOnly)}>{changedOnly ? "Show All" : "Changed Only"}</button>
+        {preview && <button className="ghostButton" onClick={() => copyText(preview.sections.map((section) => `${section.title}\n${section.diff}`).join("\n\n"))}>Copy Diff</button>}
+      </div>
+      {!preview ? (
+        <div className="empty">Choose a preview action.</div>
+      ) : (
+        <div className="previewStack standalone">
+          {sections.map((section) => (
+            <details className="previewSection" key={`${section.title}-${section.path}`} open={section.status === "changed" || section.status === "error"}>
+              <summary>
+                <span>{section.title}</span>
+                <StatusPill value={section.status} />
+              </summary>
+              <div className="buttonRow compact">
+                <button className="smallButton" onClick={() => openPath(section.path)}>Open</button>
+                <button className="smallButton" onClick={() => copyText(section.diff)}>Copy</button>
+              </div>
+              <div className="path">{section.path}</div>
+              <pre className="diffBox">{section.diff}</pre>
+            </details>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function Backups({ logs, onRefresh, openPath, copyText }: { logs: LogEntry[]; onRefresh: () => void; openPath: (path: string) => void; copyText: (text: string) => void }) {
+  const backups = logs.flatMap((log) => log.backups.map((path) => ({ path, log }))).reverse();
+  return (
+    <Panel title="Backups" subtitle={`${backups.length} backup paths found in recent action logs.`}>
+      <div className="buttonRow padded compact">
+        <button className="ghostButton" onClick={onRefresh}>Refresh</button>
+      </div>
+      {backups.length === 0 ? (
+        <div className="empty">No backup paths have been parsed from script output yet.</div>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Action</th>
+              <th>Backup Path</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {backups.map(({ path, log }) => (
+              <tr key={`${log.timestamp}-${path}`}>
+                <td>{new Date(Number(log.timestamp) * 1000).toLocaleString()}</td>
+                <td>{log.action}</td>
+                <td className="path">{path}</td>
+                <td>
+                  <div className="buttonRow compact">
+                    <button className="smallButton" onClick={() => openPath(path)}>Reveal</button>
+                    <button className="smallButton" onClick={() => copyText(path)}>Copy</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Panel>
+  );
+}
+
 function About({
   runtimeInfo,
   scriptVersions,
   agentsMdInfo,
+  sourceConfig,
   safetyWarnings,
   updateResult,
   checkingUpdate,
   onCheckUpdates,
   onOpenAgentsMd,
+  copyText,
 }: {
   runtimeInfo: RuntimeInfo | null;
   scriptVersions: ScriptVersionInfo[];
   agentsMdInfo: AgentsMdInfo | null;
+  sourceConfig: SourceConfigStatus;
   safetyWarnings: string[];
   updateResult: UpdateCheckResult | null;
   checkingUpdate: boolean;
   onCheckUpdates: () => void;
   onOpenAgentsMd: () => void;
+  copyText: (text: string) => void;
 }) {
+  const diagnostics = JSON.stringify({ runtimeInfo, scriptVersions, agentsMdInfo, sourceConfig, safetyWarnings, updateResult }, null, 2);
   return (
     <>
       <Panel title="About" subtitle="Application runtime info, bundled scripts, and environment details.">
@@ -924,6 +1230,52 @@ function About({
         </Panel>
       )}
 
+      <Panel title="Resource Sources" subtitle={sourceConfig.exists ? sourceConfig.path : "No sources.json configured."}>
+        {!sourceConfig.exists ? (
+          <div className="empty">Create sources.json in the repo root to load skills and commands from other local source checkouts.</div>
+        ) : !sourceConfig.valid ? (
+          <div className="errorBox">{sourceConfig.error}</div>
+        ) : sourceConfig.sources.length === 0 ? (
+          <div className="empty">sources.json exists but does not list any sources.</div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Resources</th>
+                <th>Path</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sourceConfig.sources.map((source) => (
+                <tr key={`${source.name}-${source.resolvedPath}`}>
+                  <td>{source.name}</td>
+                  <td><StatusPill value={source.status} /></td>
+                  <td>{source.resources.join(", ") || "none"}</td>
+                  <td>
+                    <button className="smallButton" onClick={() => copyText(source.resolvedPath)}>Copy</button>
+                    <div className="path">{source.resolvedPath}</div>
+                  </td>
+                  <td>{source.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
+
+      {sourceConfig.warnings.length > 0 && (
+        <Panel title="Source Warnings" subtitle="Non-fatal issues while merging configured sources.">
+          <ul className="warningList">
+            {sourceConfig.warnings.map((warning) => (
+              <li key={warning} className="warningItem">{warning}</li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
       {safetyWarnings.length > 0 && (
         <Panel title="Safety Warnings" subtitle="Issues detected by the safety guard checks.">
           <ul className="warningList">
@@ -937,6 +1289,7 @@ function About({
       {agentsMdInfo && agentsMdInfo.exists && (
         <div className="buttonRow padded">
           <button className="primaryButton" onClick={onOpenAgentsMd}>Open AGENTS.md</button>
+          <button className="ghostButton" onClick={() => copyText(diagnostics)}>Copy Diagnostics</button>
         </div>
       )}
 
@@ -1123,8 +1476,8 @@ function Profiles({ profiles }: { profiles: Profile[] }) {
   );
 }
 
-type EditorTab = "MCP Editor" | "Skill Wizard" | "Command Wizard" | "Packaging";
-const editorTabs: EditorTab[] = ["MCP Editor", "Skill Wizard", "Command Wizard", "Packaging"];
+type EditorTab = "MCP Editor" | "Skill Wizard" | "Command Wizard" | "Selective Sync" | "Packaging";
+const editorTabs: EditorTab[] = ["MCP Editor", "Skill Wizard", "Command Wizard", "Selective Sync", "Packaging"];
 
 function Editor({ state, repoPath, onRefresh }: { state: AppState; repoPath: string; onRefresh: () => void }) {
   const [tab, setTab] = useState<EditorTab>("MCP Editor");
@@ -1142,6 +1495,7 @@ function Editor({ state, repoPath, onRefresh }: { state: AppState; repoPath: str
       {tab === "MCP Editor" && <McpEditor state={state} repoPath={repoPath} onRefresh={onRefresh} />}
       {tab === "Skill Wizard" && <SkillWizard repoPath={repoPath} onRefresh={onRefresh} />}
       {tab === "Command Wizard" && <CommandWizard repoPath={repoPath} onRefresh={onRefresh} />}
+      {tab === "Selective Sync" && <SelectiveSync repoPath={repoPath} />}
       {tab === "Packaging" && <Packaging repoPath={repoPath} />}
     </>
   );
@@ -1272,8 +1626,10 @@ function McpEditor({ state, repoPath, onRefresh }: { state: AppState; repoPath: 
 }
 
 function SkillWizard({ repoPath, onRefresh }: { repoPath: string; onRefresh: () => void }) {
-  const [name, setName] = useState("");
+  const [folderName, setFolderName] = useState("");
+  const [skillName, setSkillName] = useState("");
   const [description, setDescription] = useState("");
+  const [body, setBody] = useState("Use this skill when...\n\n## Workflow\n\n1. Inspect the request.\n2. Apply the documented process.\n");
   const [result, setResult] = useState<CreateResult | null>(null);
   const [running, setRunning] = useState(false);
 
@@ -1281,9 +1637,9 @@ function SkillWizard({ repoPath, onRefresh }: { repoPath: string; onRefresh: () 
     setRunning(true);
     setResult(null);
     try {
-      const res = await invoke<CreateResult>("create_skill", { repoPath: repoPath || null, name, description });
+      const res = await invoke<CreateResult>("create_skill", { repoPath, folderName, skillName: skillName || folderName, description, body });
       setResult(res);
-      if (res.ok) { setName(""); setDescription(""); onRefresh(); }
+      if (res.ok) { setFolderName(""); setSkillName(""); setDescription(""); onRefresh(); }
     } catch (error) {
       setResult({ ok: false, path: "", message: String(error) });
     } finally {
@@ -1294,10 +1650,19 @@ function SkillWizard({ repoPath, onRefresh }: { repoPath: string; onRefresh: () 
   return (
     <Panel title="Create Skill" subtitle="Creates a new SKILL.md scaffold in the skills directory.">
       <Field label="Skill Name (slug)">
-        <input className="textInput" value={name} onChange={(e) => setName(e.target.value)} placeholder="my-skill" />
+        <input className="textInput" value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder="my-skill" />
+      </Field>
+      <Field label="Display Name">
+        <input className="textInput" value={skillName} onChange={(e) => setSkillName(e.target.value)} placeholder="My Skill" />
       </Field>
       <Field label="Description">
         <input className="textInput" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this skill does" />
+      </Field>
+      <Field label="Body Template">
+        <textarea className="textArea" value={body} onChange={(e) => setBody(e.target.value)} />
+      </Field>
+      <Field label="Preview">
+        <pre className="fieldDiff">{`---\nname: ${skillName || folderName}\ndescription: ${description}\n---\n\n${body}`}</pre>
       </Field>
       {result && (
         <div className={result.ok ? "successBox" : "errorBox"}>
@@ -1306,7 +1671,7 @@ function SkillWizard({ repoPath, onRefresh }: { repoPath: string; onRefresh: () 
         </div>
       )}
       <div className="buttonRow padded compact">
-        <button className="primaryButton" onClick={submit} disabled={running || !name}>
+        <button className="primaryButton" onClick={submit} disabled={running || !folderName || !description}>
           {running ? "Creating..." : "Create Skill"}
         </button>
       </div>
@@ -1317,6 +1682,8 @@ function SkillWizard({ repoPath, onRefresh }: { repoPath: string; onRefresh: () 
 function CommandWizard({ repoPath, onRefresh }: { repoPath: string; onRefresh: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [argumentHint, setArgumentHint] = useState("");
+  const [body, setBody] = useState("Describe what this command should do.\n\nInput: $ARGUMENTS\n");
   const [result, setResult] = useState<CreateResult | null>(null);
   const [running, setRunning] = useState(false);
 
@@ -1324,9 +1691,9 @@ function CommandWizard({ repoPath, onRefresh }: { repoPath: string; onRefresh: (
     setRunning(true);
     setResult(null);
     try {
-      const res = await invoke<CreateResult>("create_command", { repoPath: repoPath || null, name, description });
+      const res = await invoke<CreateResult>("create_command", { repoPath, commandName: name, description, argumentHint, body });
       setResult(res);
-      if (res.ok) { setName(""); setDescription(""); onRefresh(); }
+      if (res.ok) { setName(""); setDescription(""); setArgumentHint(""); onRefresh(); }
     } catch (error) {
       setResult({ ok: false, path: "", message: String(error) });
     } finally {
@@ -1342,6 +1709,15 @@ function CommandWizard({ repoPath, onRefresh }: { repoPath: string; onRefresh: (
       <Field label="Description">
         <input className="textInput" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this command does" />
       </Field>
+      <Field label="Argument Hint">
+        <input className="textInput" value={argumentHint} onChange={(e) => setArgumentHint(e.target.value)} placeholder="[topic] or [file]" />
+      </Field>
+      <Field label="Body Template">
+        <textarea className="textArea" value={body} onChange={(e) => setBody(e.target.value)} />
+      </Field>
+      <Field label="Preview">
+        <pre className="fieldDiff">{`---\ndescription: ${description}${argumentHint ? `\nargument-hint: ${argumentHint}` : ""}\n---\n\n${body}`}</pre>
+      </Field>
       {result && (
         <div className={result.ok ? "successBox" : "errorBox"}>
           {result.message}
@@ -1349,10 +1725,73 @@ function CommandWizard({ repoPath, onRefresh }: { repoPath: string; onRefresh: (
         </div>
       )}
       <div className="buttonRow padded compact">
-        <button className="primaryButton" onClick={submit} disabled={running || !name}>
+        <button className="primaryButton" onClick={submit} disabled={running || !name || !description}>
           {running ? "Creating..." : "Create Command"}
         </button>
       </div>
+    </Panel>
+  );
+}
+
+function SelectiveSync({ repoPath }: { repoPath: string }) {
+  const [tools, setTools] = useState(["codex"]);
+  const [categories, setCategories] = useState(["mcps"]);
+  const [plan, setPlan] = useState<SelectiveSyncPlan | null>(null);
+  const toolOptions = ["claude-code", "codex", "opencode", "github-copilot-cli"];
+  const categoryOptions = ["globals", "skills", "commands", "mcps"];
+
+  function toggle(value: string, values: string[], setter: (values: string[]) => void) {
+    setter(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
+  }
+
+  async function preview() {
+    setPlan(await invoke<SelectiveSyncPlan>("plan_selective_sync", { repoPath, tools, categories }));
+  }
+
+  return (
+    <Panel title="Selective Sync" subtitle="Plans narrow sync operations where the bundled scripts support them.">
+      <Field label="Tools">
+        <div className="buttonRow">
+          {toolOptions.map((tool) => (
+            <button key={tool} className={tools.includes(tool) ? "primaryButton" : "ghostButton"} onClick={() => toggle(tool, tools, setTools)}>
+              {labelize(tool)}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Categories">
+        <div className="buttonRow">
+          {categoryOptions.map((category) => (
+            <button key={category} className={categories.includes(category) ? "primaryButton" : "ghostButton"} onClick={() => toggle(category, categories, setCategories)}>
+              {labelize(category)}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <div className="buttonRow padded compact">
+        <button className="primaryButton" onClick={preview}>Plan Selective Sync</button>
+      </div>
+      {plan && (
+        <>
+          {plan.warnings.length > 0 && (
+            <div className="warningList">
+              {plan.warnings.map((warning) => <div key={warning} className="warningItem">{warning}</div>)}
+            </div>
+          )}
+          <div className="previewStack standalone">
+            {plan.plans.map((item) => (
+              <details key={`${item.action}-${item.displayCommand}`} className="previewSection" open>
+                <summary>
+                  <span>{item.title}</span>
+                  <StatusPill value={plan.supported ? "planned" : "limited"} />
+                </summary>
+                <pre className="commandBox">{item.displayCommand}</pre>
+                <ul>{item.affectedPaths.map((path) => <li key={path} className="path">{path}</li>)}</ul>
+              </details>
+            ))}
+          </div>
+        </>
+      )}
     </Panel>
   );
 }
@@ -1474,17 +1913,19 @@ function ImportDialog({
 }: {
   defaultDestination: string;
   onCancel: () => void;
-  onRun: (source: string, destination: string) => void;
+  onRun: (source: string, destination: string, branch?: string, shallow?: boolean) => void;
 }) {
   const [source, setSource] = useState("");
   const [destination, setDestination] = useState(defaultDestination);
+  const [branch, setBranch] = useState("");
+  const [shallow, setShallow] = useState(true);
   const [plan, setPlan] = useState<RepoImportPlan | null>(null);
   const [error, setError] = useState("");
 
   async function review() {
     setError("");
     try {
-      setPlan(await invoke<RepoImportPlan>("plan_repo_import", { source, destination }));
+      setPlan(await invoke<RepoImportPlan>("plan_repo_import", { source, destination, branch: branch || null, shallow }));
     } catch (error) {
       setPlan(null);
       setError(String(error));
@@ -1507,7 +1948,11 @@ function ImportDialog({
               className="textInput"
               value={source}
               onChange={(event) => {
-                setSource(event.target.value);
+                const next = event.target.value;
+                setSource(next);
+                if (destination === defaultDestination || destination.endsWith("/agents-import")) {
+                  setDestination(deriveImportDestination(defaultDestination, next));
+                }
                 setPlan(null);
               }}
               placeholder="https://github.com/user/agents.git or https://.../repo.zip"
@@ -1523,6 +1968,23 @@ function ImportDialog({
               }}
               placeholder="~/agents-import"
             />
+          </Field>
+          <Field label="Git Branch / Tag">
+            <input
+              className="textInput"
+              value={branch}
+              onChange={(event) => {
+                setBranch(event.target.value);
+                setPlan(null);
+              }}
+              placeholder="main, v1.0.0, or leave empty"
+            />
+          </Field>
+          <Field label="Shallow Git Clone">
+            <input type="checkbox" checked={shallow} onChange={(event) => {
+              setShallow(event.target.checked);
+              setPlan(null);
+            }} />
           </Field>
           {error && <div className="errorBox">{error}</div>}
           {plan && (
@@ -1543,7 +2005,7 @@ function ImportDialog({
         <div className="modalActions">
           <button className="ghostButton" onClick={onCancel}>Cancel</button>
           <button className="ghostButton" onClick={review}>Review</button>
-          <button className="primaryButton" disabled={!plan} onClick={() => onRun(source, destination)}>Run Import</button>
+          <button className="primaryButton" disabled={!plan} onClick={() => onRun(source, destination, branch, shallow)}>Run Import</button>
         </div>
       </div>
     </div>
@@ -1602,8 +2064,39 @@ function McpCell({ status }: { status?: McpInstallStatus }) {
   return (
     <>
       <StatusPill value={status.status} />
+      {status.authStatus && <StatusPill value={status.authStatus} />}
       <div className="path">{status.message}</div>
     </>
+  );
+}
+
+function StructuredOutputView({ output }: { output: StructuredOutput }) {
+  const groups: Array<[string, string[]]> = [
+    ["Summary", output.summary],
+    ["Changed", output.changed],
+    ["Skipped", output.skipped],
+    ["Warnings", output.warnings],
+    ["Errors", output.errors],
+    ["Backups", output.backups],
+    ["Auth Hints", output.authHints],
+  ];
+  return (
+    <div className="structuredOutput">
+      <div className="structuredSummary">
+        <StatusPill value={output.exitCode === 0 || output.exitCode === undefined ? "ok" : "error"} />
+        <span className="path">exit: {output.exitCode ?? "unknown"}</span>
+      </div>
+      {groups.map(([label, lines]) => lines.length > 0 && (
+        <details key={label} open={label === "Summary" || label === "Errors" || label === "Warnings"}>
+          <summary>{label} ({lines.length})</summary>
+          <pre>{lines.join("\n")}</pre>
+        </details>
+      ))}
+      <details>
+        <summary>Raw Output</summary>
+        <pre>{["stdout:", output.rawStdout || "<empty>", "", "stderr:", output.rawStderr || "<empty>"].join("\n")}</pre>
+      </details>
+    </div>
   );
 }
 
@@ -1641,6 +2134,14 @@ function formatImportResult(result: RepoImportResult) {
     "stderr:",
     result.stderr.trimEnd() || "<empty>",
   ].join("\n");
+}
+
+function deriveImportDestination(defaultDestination: string, source: string) {
+  const base = defaultDestination.replace(/\/agents-import$/, "") || defaultDestination;
+  const clean = source.split("?")[0].replace(/\/$/, "");
+  const last = clean.split("/").pop() || "agents-import";
+  const name = last.replace(/\.git$/, "").replace(/\.zip$/, "") || "agents-import";
+  return `${base}/${name}`;
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

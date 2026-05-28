@@ -1,5 +1,10 @@
 use crate::models::{AgentsRepo, RepoPaths};
-use std::{env, error::Error, fmt, fs, path::{Path, PathBuf}};
+use std::{
+    env,
+    error::Error,
+    fmt, fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug)]
 pub struct RepoError(String);
@@ -124,16 +129,28 @@ pub fn parse_frontmatter(markdown: &str) -> std::collections::BTreeMap<String, S
             index += 1;
             while index < lines.len() {
                 let next = lines[index];
-                if next.chars().next().is_some_and(|char| !char.is_whitespace()) && next.contains(':') {
+                if next
+                    .chars()
+                    .next()
+                    .is_some_and(|char| !char.is_whitespace())
+                    && next.contains(':')
+                {
                     index -= 1;
                     break;
                 }
                 parts.push(next.trim());
                 index += 1;
             }
-            value = parts.join(" ").split_whitespace().collect::<Vec<_>>().join(" ");
+            value = parts
+                .join(" ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
         }
-        result.insert(key.trim().to_string(), value.trim_matches(&['"', '\''][..]).to_string());
+        result.insert(
+            key.trim().to_string(),
+            value.trim_matches(&['"', '\''][..]).to_string(),
+        );
         index += 1;
     }
     result
@@ -180,7 +197,7 @@ fn expand_home(value: &str, home: &Path) -> PathBuf {
 }
 
 fn is_repo(candidate: &Path) -> bool {
-    ["AGENTS.md", "skills", "commands", "mcp/servers.json"]
+    ["AGENTS.md", "skills", "mcp/servers.json"]
         .iter()
         .all(|entry| candidate.join(entry).exists())
 }

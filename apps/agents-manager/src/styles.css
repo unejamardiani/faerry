@@ -212,6 +212,14 @@ td {
   vertical-align: top;
 }
 
+tr.selectedRow td {
+  background: #eaf4f3;
+}
+
+tbody tr:hover td {
+  background: #f5f8fa;
+}
+
 th {
   color: var(--muted);
   font-size: 12px;
@@ -222,6 +230,38 @@ th {
 .description {
   max-width: 520px;
   color: var(--muted);
+}
+
+.splitView {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.detailPane {
+  display: grid;
+  gap: 12px;
+  padding: 14px 0 4px;
+}
+
+.statusGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.previewText {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 10px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .path {
@@ -245,16 +285,27 @@ th {
 
 .status.installed,
 .status.valid,
-.status.enabled {
+.status.enabled,
+.status.loaded,
+.status.local,
+.status.git {
   background: #e5f3eb;
   color: var(--ok);
 }
 
 .status.drift,
 .status.unmanaged,
-.status.invalid {
+.status.invalid,
+.status.warning,
+.status.external,
+.status.source-only {
   background: #fff0d4;
   color: var(--warn);
+}
+
+.status.disabled {
+  background: var(--surface-soft);
+  color: var(--unknown);
 }
 
 .status.error {
@@ -420,6 +471,22 @@ th {
   outline: 2px solid rgba(17, 106, 108, 0.16);
 }
 
+.textArea {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: var(--text);
+  font: inherit;
+}
+
+.textArea:focus {
+  border-color: var(--accent);
+  outline: 2px solid rgba(17, 106, 108, 0.16);
+}
+
 .errorBox {
   border: 1px solid #f2bbb4;
   border-radius: 7px;
@@ -548,4 +615,45 @@ th {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text);
+}
+
+.structuredOutput {
+  display: grid;
+  gap: 8px;
+  padding: 12px 16px 16px;
+  background: #111820;
+  color: #e9f1f7;
+}
+
+.structuredSummary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.structuredOutput details {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.structuredOutput summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  font-weight: 700;
+}
+
+.structuredOutput pre {
+  min-height: 0;
+  max-height: 260px;
+  margin: 0;
+  padding: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.previewStack.standalone {
+  max-height: none;
+  padding: 16px;
 }

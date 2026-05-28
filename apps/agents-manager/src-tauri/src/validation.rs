@@ -8,12 +8,60 @@ pub fn validate_repo(root: &str) -> RepoValidation {
     let mut issues = Vec::new();
 
     // Required files
-    validate_file(&mut issues, "agents-md", path, "AGENTS.md", "info", true, "AGENTS.md is the root global instructions file.");
-    validate_dir(&mut issues, "skills-dir", path, "skills", "warning", true, "Skills directory provides reusable agent skills.");
-    validate_dir(&mut issues, "commands-dir", path, "commands", "warning", true, "Commands directory provides reusable agent prompts.");
-    validate_file(&mut issues, "mcp-registry", path, "mcp/servers.json", "error", true, "MCP registry is the source of truth for all tool MCP entries.");
-    validate_dir(&mut issues, "templates-dir", path, "templates", "info", false, "Templates directory provides instruction templates.");
-    validate_dir(&mut issues, "scripts-dir", path, "scripts", "info", false, "Scripts directory contains the sync scripts.");
+    validate_file(
+        &mut issues,
+        "agents-md",
+        path,
+        "AGENTS.md",
+        "info",
+        true,
+        "AGENTS.md is the root global instructions file.",
+    );
+    validate_dir(
+        &mut issues,
+        "skills-dir",
+        path,
+        "skills",
+        "warning",
+        true,
+        "Skills directory provides reusable agent skills.",
+    );
+    validate_dir(
+        &mut issues,
+        "commands-dir",
+        path,
+        "commands",
+        "warning",
+        true,
+        "Commands directory provides reusable agent prompts.",
+    );
+    validate_file(
+        &mut issues,
+        "mcp-registry",
+        path,
+        "mcp/servers.json",
+        "error",
+        true,
+        "MCP registry is the source of truth for all tool MCP entries.",
+    );
+    validate_dir(
+        &mut issues,
+        "templates-dir",
+        path,
+        "templates",
+        "info",
+        false,
+        "Templates directory provides instruction templates.",
+    );
+    validate_dir(
+        &mut issues,
+        "scripts-dir",
+        path,
+        "scripts",
+        "info",
+        false,
+        "Scripts directory contains the sync scripts.",
+    );
 
     // Validate skills
     let skills_dir = path.join("skills");
@@ -65,7 +113,7 @@ fn validate_file(
     relative: &str,
     severity: &str,
     required: bool,
-    message: &str,
+    _message: &str,
 ) {
     let full = root.join(relative);
     if !full.exists() {
@@ -96,7 +144,7 @@ fn validate_dir(
     relative: &str,
     severity: &str,
     required: bool,
-    message: &str,
+    _message: &str,
 ) {
     let full = root.join(relative);
     if !full.exists() || !full.is_dir() {
@@ -126,7 +174,8 @@ fn validate_skills(issues: &mut Vec<ValidationIssue>, skills_dir: &Path) {
                     severity: "warning".into(),
                     path: repo::display_path(&skill_md),
                     message: format!("Skill folder '{name}' is missing SKILL.md."),
-                    suggestion: "Add a SKILL.md file with YAML frontmatter to the skill folder.".into(),
+                    suggestion: "Add a SKILL.md file with YAML frontmatter to the skill folder."
+                        .into(),
                 });
                 continue;
             }
@@ -220,7 +269,11 @@ fn validate_mcp_registry(issues: &mut Vec<ValidationIssue>, registry: &Path) {
             if let Some(server_type) = server.get("type").and_then(serde_json::Value::as_str) {
                 match server_type {
                     "remote" => {
-                        if server.get("url").and_then(serde_json::Value::as_str).is_none_or(|u| u.is_empty()) {
+                        if server
+                            .get("url")
+                            .and_then(serde_json::Value::as_str)
+                            .is_none_or(|u| u.is_empty())
+                        {
                             issues.push(ValidationIssue {
                                 code: "mcp-remote-no-url".into(),
                                 severity: "error".into(),
@@ -230,8 +283,12 @@ fn validate_mcp_registry(issues: &mut Vec<ValidationIssue>, registry: &Path) {
                             });
                         }
                     }
-                    "stdio" => {
-                        if server.get("command").and_then(serde_json::Value::as_str).is_none_or(|c| c.is_empty()) {
+                    "stdio" | "local" => {
+                        if server
+                            .get("command")
+                            .and_then(serde_json::Value::as_str)
+                            .is_none_or(|c| c.is_empty())
+                        {
                             issues.push(ValidationIssue {
                                 code: "mcp-stdio-no-command".into(),
                                 severity: "error".into(),
@@ -246,7 +303,9 @@ fn validate_mcp_registry(issues: &mut Vec<ValidationIssue>, registry: &Path) {
                             code: "mcp-unknown-type".into(),
                             severity: "warning".into(),
                             path: name.clone(),
-                            message: format!("MCP server '{name}' has unknown type: {server_type}."),
+                            message: format!(
+                                "MCP server '{name}' has unknown type: {server_type}."
+                            ),
                             suggestion: "Use 'remote' or 'stdio' as the type.".into(),
                         });
                     }
@@ -263,7 +322,8 @@ fn validate_mcp_registry(issues: &mut Vec<ValidationIssue>, registry: &Path) {
                             severity: "warning".into(),
                             path: name.clone(),
                             message: format!("MCP server '{name}' has unknown target: {key}."),
-                            suggestion: "Use one of: claudeCode, codex, opencode, githubCopilotCli.".into(),
+                            suggestion:
+                                "Use one of: claudeCode, codex, opencode, githubCopilotCli.".into(),
                         });
                     }
                 }

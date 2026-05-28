@@ -76,3 +76,75 @@ Supported sources:
 - Local `.zip` files
 
 The destination path must not already exist. After a successful import, the app switches to the imported repo as the selected source of truth.
+
+Git imports support an optional branch/tag and shallow clone mode. The destination is auto-derived from common Git/ZIP source names but remains editable before running.
+
+## Resource Sources
+
+The app can load skills and commands from additional local source checkouts at startup/refresh time. Add a `sources.json` file to the selected repo root:
+
+```json
+{
+  "sources": [
+    {
+      "name": "team-shared",
+      "path": "../team-agents",
+      "enabled": true,
+      "skills": true,
+      "commands": true
+    },
+    {
+      "name": "vendor-skills",
+      "path": "~/agent-sources/vendor",
+      "skillsPath": "skills",
+      "commands": false
+    },
+    {
+      "name": "github-skills-folder",
+      "url": "https://github.com/Leonxlnx/taste-skill/tree/main/skills",
+      "skills": true,
+      "commands": false,
+      "includeSkills": [
+        "taste-*",
+        "planner"
+      ]
+    },
+    {
+      "name": "github-selected-skills",
+      "url": "https://github.com/example/agents.git",
+      "ref": "main",
+      "skills": true,
+      "commands": false,
+      "skillPaths": [
+        "skills/first-skill",
+        "skills/second-skill"
+      ]
+    }
+  ]
+}
+```
+
+Local `path` entries may be absolute, `~/...`, or relative to the selected repo. Git `url` entries are cloned into `.agents-manager/source-cache/` under the selected repo and loaded from that cache. GitHub `tree/...` links can point at a repo root, a `skills/` folder, or a single skill folder containing `SKILL.md`; GitHub `blob/.../SKILL.md` links are treated as that single skill folder.
+
+By default the app reads `skills/` and `commands/` under each source. Use `skillsPath` or `commandsPath` when a source uses a different folder layout, or `skillPaths` / `commandPaths` to list specific entries from one source. Set `ref` or `branch` for Git branches/tags. Set `refresh: true` when the app should fetch the Git source on every load; otherwise it clones once and reuses the cache.
+
+For folders with many skills, use `includeSkills` and `excludeSkills` as simple glob lists. Patterns are matched against the skill folder name, the skill display name from frontmatter, and the path relative to the source root. If `includeSkills` is omitted or empty, all discovered skills are included. `excludeSkills` is applied after includes. Commands have the same optional `includeCommands` and `excludeCommands` filters.
+
+The local selected repo wins on name conflicts. External skills and commands are shown with `source-only` install status because the current sync scripts still link only the selected repo's own `skills/` and `commands/` directories.
+
+## Inspection Views
+
+The app includes read-only inspection views for:
+
+- runtime diagnostics, dependency availability, bundled script checksums, and repo-vs-bundled script comparison
+- repo validation and safety warnings
+- skill, command, and MCP server detail panes
+- standalone diff previews
+- recent logs and parsed backup paths
+- read-only profiles
+
+MCP auth status is best-effort. Where CLIs do not expose a stable status command, the UI shows the manual command to run after sync.
+
+## Selective Sync
+
+Selective sync planning is available in the **Editor** view. MCP sync can be planned per supported target tool. Link sync is still limited by the bundled scripts and currently runs the whole link script when globals, skills, or commands are selected.

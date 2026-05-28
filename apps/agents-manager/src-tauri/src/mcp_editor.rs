@@ -1,11 +1,6 @@
-use crate::models::{McpRegistryEditResult, McpServerFormData, ValidationIssue};
-use crate::repo;
+use crate::models::{McpRegistryEditResult, McpServerFormData};
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
 use std::fs;
-
-const MANAGED_START: &str = "# BEGIN portable-agents managed MCP servers";
-const MANAGED_END: &str = "# END portable-agents managed MCP servers";
 
 /// Validate MCP server form data.
 pub fn validate_server(data: &McpServerFormData) -> Vec<String> {
@@ -14,8 +9,15 @@ pub fn validate_server(data: &McpServerFormData) -> Vec<String> {
     if data.name.is_empty() {
         errors.push("Server name is required.".into());
     }
-    if !data.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-        errors.push("Server name must contain only alphanumeric characters, hyphens, and underscores.".into());
+    if !data
+        .name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        errors.push(
+            "Server name must contain only alphanumeric characters, hyphens, and underscores."
+                .into(),
+        );
     }
 
     match data.server_type.as_str() {
@@ -36,12 +38,18 @@ pub fn validate_server(data: &McpServerFormData) -> Vec<String> {
             }
         }
         _ => {
-            errors.push(format!("Unknown server type: {}. Use 'remote' or 'stdio'.", data.server_type));
+            errors.push(format!(
+                "Unknown server type: {}. Use 'remote' or 'stdio'.",
+                data.server_type
+            ));
         }
     }
 
     if !data.transport.is_empty() && !["http", "sse", "stdio"].contains(&data.transport.as_str()) {
-        errors.push(format!("Unknown transport: {}. Use 'http', 'sse', or 'stdio'.", data.transport));
+        errors.push(format!(
+            "Unknown transport: {}. Use 'http', 'sse', or 'stdio'.",
+            data.transport
+        ));
     }
 
     errors
@@ -78,9 +86,20 @@ pub fn edit_server(
         }
     };
 
-    let servers = if parsed.get("servers").and_then(Value::as_object).is_none() {
-        *parsed.get_mut("servers").unwrap_or(&mut Value::Null) = Value::Object(Map::new());
-    };
+    if parsed.get("servers").and_then(Value::as_object).is_none() {
+        if let Some(object) = parsed.as_object_mut() {
+            object.insert("servers".into(), Value::Object(Map::new()));
+        } else {
+            return McpRegistryEditResult {
+                ok: false,
+                message: "Registry root must be a JSON object.".into(),
+                validation_errors: vec![
+                    "mcp/servers.json must contain a JSON object at the root.".into()
+                ],
+                diff: String::new(),
+            };
+        }
+    }
     let servers = parsed
         .get_mut("servers")
         .and_then(Value::as_object_mut)
@@ -93,7 +112,9 @@ pub fn edit_server(
                     return McpRegistryEditResult {
                         ok: false,
                         message: format!("Server '{name}' already exists."),
-                        validation_errors: vec![format!("Server '{name}' already exists in the registry.")],
+                        validation_errors: vec![format!(
+                            "Server '{name}' already exists in the registry."
+                        )],
                         diff: String::new(),
                     };
                 }
@@ -117,7 +138,9 @@ pub fn edit_server(
                     return McpRegistryEditResult {
                         ok: false,
                         message: format!("Server '{name}' not found."),
-                        validation_errors: vec![format!("Server '{name}' does not exist in the registry.")],
+                        validation_errors: vec![format!(
+                            "Server '{name}' does not exist in the registry."
+                        )],
                         diff: String::new(),
                     };
                 }
@@ -135,7 +158,8 @@ pub fn edit_server(
                 format!(
                     "- Old: {}\n+ New: {}",
                     serde_json::to_string_pretty(&old).unwrap_or_default(),
-                    serde_json::to_string_pretty(servers.get(name).unwrap_or(&Value::Null)).unwrap_or_default()
+                    serde_json::to_string_pretty(servers.get(name).unwrap_or(&Value::Null))
+                        .unwrap_or_default()
                 )
             } else {
                 format!("No changes for {name}")
@@ -150,7 +174,7 @@ pub fn edit_server(
                     diff: String::new(),
                 };
             }
-            let removed = servers.remove(name);
+            let _removed = servers.remove(name);
             format!("- Removed server: {name}")
         }
         _ => {
@@ -164,11 +188,13 @@ pub fn edit_server(
     };
 
     // Create backup
-    let backup_path = format!("{registry_path}.bak");
+    let backup_path = format!("{registry_path}.{}.bak", timestamp());
     let _ = fs::write(&backup_path, &text);
 
     let new_text = serde_json::to_string_pretty(&parsed).unwrap_or_default();
-    fs::write(registry_path, &new_text).map_err(|e| e.to_string()).ok();
+    fs::write(registry_path, &new_text)
+        .map_err(|e| e.to_string())
+        .ok();
 
     McpRegistryEditResult {
         ok: true,
@@ -178,10 +204,20 @@ pub fn edit_server(
     }
 }
 
+fn timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
 fn form_to_value(data: &McpServerFormData) -> Value {
     let mut map = Map::new();
     if !data.description.is_empty() {
-        map.insert("description".into(), Value::String(data.description.clone()));
+        map.insert(
+            "description".into(),
+            Value::String(data.description.clone()),
+        );
     }
     map.insert("type".into(), Value::String(data.server_type.clone()));
     map.insert("transport".into(), Value::String(data.transport.clone()));
@@ -192,23 +228,43 @@ fn form_to_value(data: &McpServerFormData) -> Value {
         map.insert("command".into(), Value::String(data.command.clone()));
     }
     if !data.args.is_empty() {
-        map.insert("args".into(), Value::Array(data.args.iter().map(|a| Value::String(a.clone())).collect()));
+        map.insert(
+            "args".into(),
+            Value::Array(data.args.iter().map(|a| Value::String(a.clone())).collect()),
+        );
     }
     if let Some(headers) = &data.headers {
-        map.insert("headers".into(), Value::Object(
-            headers.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect()
-        ));
+        map.insert(
+            "headers".into(),
+            Value::Object(
+                headers
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                    .collect(),
+            ),
+        );
     }
     if let Some(env) = &data.environment {
-        map.insert("environment".into(), Value::Object(
-            env.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect()
-        ));
+        map.insert(
+            "environment".into(),
+            Value::Object(
+                env.iter()
+                    .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                    .collect(),
+            ),
+        );
     }
     map.insert("enabled".into(), Value::Bool(data.enabled));
     if !data.targets.is_empty() {
-        map.insert("targets".into(), Value::Object(
-            data.targets.iter().map(|(k, v)| (k.clone(), Value::Bool(*v))).collect()
-        ));
+        map.insert(
+            "targets".into(),
+            Value::Object(
+                data.targets
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Value::Bool(*v)))
+                    .collect(),
+            ),
+        );
     }
     Value::Object(map)
 }

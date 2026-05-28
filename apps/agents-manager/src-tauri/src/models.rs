@@ -28,6 +28,7 @@ pub struct AppState {
     pub repo: Option<AgentsRepo>,
     pub repo_error: Option<String>,
     pub generated_at: String,
+    pub source_config: SourceConfigStatus,
     pub registry: McpRegistry,
     pub tools: Vec<ToolStatus>,
     pub skills: Vec<SkillItem>,
@@ -37,11 +38,84 @@ pub struct AppState {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SourceConfigStatus {
+    pub path: String,
+    pub exists: bool,
+    pub valid: bool,
+    pub error: Option<String>,
+    pub sources: Vec<ResourceSourceStatus>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceSourceStatus {
+    pub name: String,
+    pub path: String,
+    pub resolved_path: String,
+    pub enabled: bool,
+    pub resources: Vec<String>,
+    pub status: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceSourcesFile {
+    #[serde(default)]
+    pub sources: Vec<ResourceSourceConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceSourceConfig {
+    pub name: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default, rename = "ref")]
+    pub git_ref: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub refresh: Option<bool>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub skills: Option<bool>,
+    #[serde(default)]
+    pub commands: Option<bool>,
+    #[serde(default)]
+    pub skills_path: Option<String>,
+    #[serde(default)]
+    pub commands_path: Option<String>,
+    #[serde(default)]
+    pub skill_paths: Vec<String>,
+    #[serde(default)]
+    pub command_paths: Vec<String>,
+    #[serde(default)]
+    pub include_skills: Vec<String>,
+    #[serde(default)]
+    pub exclude_skills: Vec<String>,
+    #[serde(default)]
+    pub include_commands: Vec<String>,
+    #[serde(default)]
+    pub exclude_commands: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillItem {
     pub name: String,
     pub description: String,
     pub path: String,
     pub file: String,
+    pub source_name: String,
+    pub source_path: String,
+    pub source_kind: String,
+    pub frontmatter: BTreeMap<String, String>,
+    pub preview: String,
     pub installs: BTreeMap<String, String>,
 }
 
@@ -50,7 +124,13 @@ pub struct SkillItem {
 pub struct CommandItem {
     pub name: String,
     pub description: String,
+    pub argument_hint: String,
     pub path: String,
+    pub source_name: String,
+    pub source_path: String,
+    pub source_kind: String,
+    pub frontmatter: BTreeMap<String, String>,
+    pub preview: String,
     pub installs: BTreeMap<String, String>,
 }
 
@@ -73,8 +153,11 @@ pub struct McpServerItem {
     pub url: String,
     pub command: String,
     pub args: Vec<String>,
+    pub has_headers: bool,
+    pub has_environment: bool,
     pub enabled: bool,
     pub targets: BTreeMap<String, bool>,
+    pub raw_json: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -141,6 +224,8 @@ pub struct RepoImportPlan {
     pub source: String,
     pub destination: String,
     pub source_type: String,
+    pub branch: Option<String>,
+    pub shallow: bool,
     pub display_command: String,
     pub affected_paths: Vec<String>,
     pub note: String,
@@ -154,6 +239,15 @@ pub struct RepoImportResult {
     pub repo_path: Option<String>,
     pub stdout: String,
     pub stderr: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectiveSyncPlan {
+    pub title: String,
+    pub supported: bool,
+    pub plans: Vec<ScriptPlan>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -382,6 +476,7 @@ pub struct PackageResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct SelectiveSyncConfig {
     pub tools: Vec<String>,
     pub categories: Vec<String>,

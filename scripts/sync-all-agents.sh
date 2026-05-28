@@ -24,7 +24,7 @@ Default behavior:
   1. Link ~/.agents to this repository.
   2. Link Claude Code, OpenCode, Codex, and Copilot CLI to ~/.agents.
   3. Build Claude Desktop skill ZIPs from repo skills.
-  4. Build the Claude Desktop MCPB extension from repo commands.
+  4. Build the Claude Desktop MCPB extension.
 
 Claude Desktop / Cowork / Claude 3P live app data is not modified by default.
 Use --with-cowork-live when you explicitly want to copy repo skills into
@@ -34,8 +34,6 @@ Options:
   --repo-root PATH            Override repository root.
   --home PATH                 Pass through to link-agents.sh.
   --codex-home PATH           Pass through to link-agents.sh.
-  --atlas-dir PATH            Pass through to link-agents.sh.
-  --cortex-dir PATH           Pass through to link-agents.sh.
   --skip-claude               Pass through to link-agents.sh.
   --skip-opencode             Pass through to link-agents.sh.
   --skip-codex                Pass through to link-agents.sh.
@@ -58,7 +56,7 @@ while [[ $# -gt 0 ]]; do
       LINK_ARGS+=("--repo-root" "$2")
       shift 2
       ;;
-    --home|--codex-home|--atlas-dir|--cortex-dir)
+    --home|--codex-home)
       LINK_ARGS+=("$1" "$2")
       shift 2
       ;;

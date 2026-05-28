@@ -76,7 +76,8 @@ pub fn materialize() -> Result<PathBuf, String> {
 
     for script in SCRIPTS {
         let path = dir.join(script.name);
-        fs::write(&path, patched_content(script.name, script.content)).map_err(|error| error.to_string())?;
+        fs::write(&path, patched_content(script.name, script.content))
+            .map_err(|error| error.to_string())?;
         set_permissions(&path, script.executable)?;
     }
 
@@ -92,7 +93,8 @@ pub fn display_name(command: &str) -> Option<&str> {
 }
 
 pub fn get_script_content(name: &str) -> String {
-    SCRIPTS.iter()
+    SCRIPTS
+        .iter()
         .find(|s| s.name == name)
         .map(|s| s.content.to_string())
         .unwrap_or_default()
@@ -134,7 +136,9 @@ fn set_permissions(path: &Path, executable: bool) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     if executable {
-        let mut permissions = fs::metadata(path).map_err(|error| error.to_string())?.permissions();
+        let mut permissions = fs::metadata(path)
+            .map_err(|error| error.to_string())?
+            .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(path, permissions).map_err(|error| error.to_string())?;
     }

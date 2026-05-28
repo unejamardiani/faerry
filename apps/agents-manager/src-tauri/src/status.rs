@@ -1,27 +1,41 @@
-use crate::{models::*, repo};
+use crate::{auth, models::*, repo};
 use serde_json::Value;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
+const SOURCES_FILENAME: &str = "sources.json";
+
 pub fn build_state(repo_override: Option<String>) -> AppState {
     match repo::detect_repo_with_override(repo_override) {
         Ok(repo) => {
+            let mut source_load = read_source_config(&repo);
             let registry = read_registry(&repo);
             let tools = read_tools(&repo);
             let skill_installs = installs_for(&tools, "skills");
             let command_installs = installs_for(&tools, "commands");
-            let skills = read_skills(&repo, skill_installs);
-            let commands = read_commands(&repo, command_installs);
+            let skills = read_skills(
+                &repo,
+                skill_installs,
+                &source_load.sources,
+                &mut source_load.status.warnings,
+            );
+            let commands = read_commands(
+                &repo,
+                command_installs,
+                &source_load.sources,
+                &mut source_load.status.warnings,
+            );
             let mcp_statuses = read_mcp_statuses(&repo, &registry.servers);
             AppState {
                 repo: Some(repo),
                 repo_error: None,
                 generated_at: generated_at(),
+                source_config: source_load.status,
                 registry,
                 tools,
                 skills,
@@ -33,6 +47,14 @@ pub fn build_state(repo_override: Option<String>) -> AppState {
             repo: None,
             repo_error: Some(error.to_string()),
             generated_at: generated_at(),
+            source_config: SourceConfigStatus {
+                path: String::new(),
+                exists: false,
+                valid: false,
+                error: Some(error.to_string()),
+                sources: Vec::new(),
+                warnings: Vec::new(),
+            },
             registry: McpRegistry {
                 valid: false,
                 path: String::new(),
@@ -55,41 +77,846 @@ fn generated_at() -> String {
     seconds.to_string()
 }
 
-fn read_skills(repo: &AgentsRepo, installs: BTreeMap<String, String>) -> Vec<SkillItem> {
-    repo::list_dirs(&repo.paths.skills)
+#[derive(Debug, Clone)]
+struct SourceLoad {
+    status: SourceConfigStatus,
+    sources: Vec<LoadedResourceSource>,
+}
+
+#[derive(Debug, Clone)]
+struct LoadedResourceSource {
+    name: String,
+    resolved_path: PathBuf,
+    source_kind: String,
+    skills_dir: Option<PathBuf>,
+    skill_dirs: Vec<PathBuf>,
+    commands_dir: Option<PathBuf>,
+    command_files: Vec<PathBuf>,
+    include_skills: Vec<String>,
+    exclude_skills: Vec<String>,
+    include_commands: Vec<String>,
+    exclude_commands: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedSourceRoot {
+    path: PathBuf,
+    source_kind: String,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct GitSourceSpec {
+    clone_url: String,
+    git_ref: Option<String>,
+    subpath: Option<PathBuf>,
+}
+
+fn read_source_config(repo: &AgentsRepo) -> SourceLoad {
+    let path = Path::new(&repo.root).join(SOURCES_FILENAME);
+    let display_path = repo::display_path(&path);
+    let mut status = SourceConfigStatus {
+        path: display_path,
+        exists: path.exists(),
+        valid: true,
+        error: None,
+        sources: Vec::new(),
+        warnings: Vec::new(),
+    };
+
+    if !status.exists {
+        return SourceLoad {
+            status,
+            sources: Vec::new(),
+        };
+    }
+
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) => {
+            status.valid = false;
+            status.error = Some(error.to_string());
+            return SourceLoad {
+                status,
+                sources: Vec::new(),
+            };
+        }
+    };
+    let parsed: ResourceSourcesFile = match serde_json::from_str(&text) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            status.valid = false;
+            status.error = Some(error.to_string());
+            return SourceLoad {
+                status,
+                sources: Vec::new(),
+            };
+        }
+    };
+
+    let mut loaded = Vec::new();
+    for (index, source) in parsed.sources.iter().enumerate() {
+        let enabled = source.enabled.unwrap_or(true);
+        let name = source
+            .name
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| format!("source-{}", index + 1));
+        let source_display = source
+            .url
+            .as_deref()
+            .or(source.path.as_deref())
+            .unwrap_or_default()
+            .to_string();
+        let resources = enabled_resources(source);
+        let mut source_status = ResourceSourceStatus {
+            name: name.clone(),
+            path: source_display,
+            resolved_path: String::new(),
+            enabled,
+            resources: resources.clone(),
+            status: "disabled".into(),
+            message: "Source is disabled.".into(),
+        };
+
+        if !enabled {
+            status.sources.push(source_status);
+            continue;
+        }
+        let resolved = match resolve_source_root(repo, source, &name) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                source_status.status = "error".into();
+                source_status.message = error.clone();
+                status
+                    .warnings
+                    .push(format!("Source `{name}` was skipped: {error}"));
+                status.sources.push(source_status);
+                continue;
+            }
+        };
+        for warning in &resolved.warnings {
+            status.warnings.push(format!("Source `{name}`: {warning}"));
+        }
+        let resolved_path = resolved.path;
+        source_status.resolved_path = repo::display_path(&resolved_path);
+        if resources.is_empty() {
+            source_status.status = "warning".into();
+            source_status.message = "No resource categories are enabled.".into();
+            status.warnings.push(format!(
+                "Source `{name}` has no enabled resource categories."
+            ));
+            status.sources.push(source_status);
+            continue;
+        }
+
+        let (skills_dir, skill_dirs) = if resources.iter().any(|resource| resource == "skills") {
+            resolve_skill_paths(&resolved_path, source)
+        } else {
+            (None, Vec::new())
+        };
+        let (commands_dir, command_files) =
+            if resources.iter().any(|resource| resource == "commands") {
+                resolve_command_paths(&resolved_path, source)
+            } else {
+                (None, Vec::new())
+            };
+
+        if skills_dir.is_none()
+            && skill_dirs.is_empty()
+            && commands_dir.is_none()
+            && command_files.is_empty()
+        {
+            source_status.status = "warning".into();
+            source_status.message =
+                "Source path exists, but no enabled resource directories were found.".into();
+            status.warnings.push(format!(
+                "Source `{name}` has no enabled resource directories under {}.",
+                repo::display_path(&resolved_path)
+            ));
+            status.sources.push(source_status);
+            continue;
+        }
+
+        let mut loaded_resources = Vec::new();
+        if skills_dir.is_some() || !skill_dirs.is_empty() {
+            loaded_resources.push("skills");
+        }
+        if commands_dir.is_some() || !command_files.is_empty() {
+            loaded_resources.push("commands");
+        }
+        source_status.status = if resolved.warnings.is_empty() {
+            "loaded".into()
+        } else {
+            "warning".into()
+        };
+        source_status.message = format!("Loaded {}.", loaded_resources.join(", "));
+        source_status.resources = loaded_resources
+            .into_iter()
+            .map(ToString::to_string)
+            .collect();
+        status.sources.push(source_status);
+        loaded.push(LoadedResourceSource {
+            name,
+            resolved_path,
+            source_kind: resolved.source_kind,
+            skills_dir,
+            skill_dirs,
+            commands_dir,
+            command_files,
+            include_skills: source.include_skills.clone(),
+            exclude_skills: source.exclude_skills.clone(),
+            include_commands: source.include_commands.clone(),
+            exclude_commands: source.exclude_commands.clone(),
+        });
+    }
+
+    SourceLoad {
+        status,
+        sources: loaded,
+    }
+}
+
+fn resolve_source_root(
+    repo: &AgentsRepo,
+    source: &ResourceSourceConfig,
+    name: &str,
+) -> Result<ResolvedSourceRoot, String> {
+    if let Some(url) = source
+        .url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return resolve_git_source(repo, source, name, url);
+    }
+
+    let Some(path) = source
+        .path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Err("Either path or url is required.".into());
+    };
+    let resolved_path = resolve_local_source_path(repo, path);
+    if !resolved_path.exists() {
+        return Err(format!(
+            "Resolved source path does not exist: {}",
+            repo::display_path(&resolved_path)
+        ));
+    }
+    Ok(ResolvedSourceRoot {
+        path: resolved_path,
+        source_kind: "external".into(),
+        warnings: Vec::new(),
+    })
+}
+
+fn enabled_resources(source: &ResourceSourceConfig) -> Vec<String> {
+    let skills = source.skills.unwrap_or(true);
+    let commands = source.commands.unwrap_or(true);
+    let mut resources = Vec::new();
+    if skills {
+        resources.push("skills".into());
+    }
+    if commands {
+        resources.push("commands".into());
+    }
+    resources
+}
+
+fn resolve_local_source_path(repo: &AgentsRepo, path: &str) -> PathBuf {
+    let raw = path.trim();
+    let expanded = repo::resolve_user_path(raw).unwrap_or_else(|_| PathBuf::from(raw));
+    let resolved = if expanded.is_absolute() {
+        expanded
+    } else {
+        Path::new(&repo.root).join(expanded)
+    };
+    resolved.canonicalize().unwrap_or(resolved)
+}
+
+fn resolve_git_source(
+    repo: &AgentsRepo,
+    source: &ResourceSourceConfig,
+    name: &str,
+    url: &str,
+) -> Result<ResolvedSourceRoot, String> {
+    let explicit_ref = source
+        .git_ref
+        .clone()
+        .or_else(|| source.branch.clone())
+        .filter(|value| !value.trim().is_empty());
+    let spec = git_source_spec(url, explicit_ref);
+    let cache_path = git_cache_path(repo, name, &spec);
+    let warnings = ensure_git_cache(&spec, &cache_path, source.refresh.unwrap_or(false))?;
+    let source_path = spec
+        .subpath
+        .as_ref()
+        .map(|subpath| cache_path.join(subpath))
+        .unwrap_or(cache_path);
+    if !source_path.exists() {
+        return Err(format!(
+            "Git source was fetched, but the configured path does not exist: {}",
+            repo::display_path(&source_path)
+        ));
+    }
+    Ok(ResolvedSourceRoot {
+        path: source_path.canonicalize().unwrap_or(source_path),
+        source_kind: "git".into(),
+        warnings,
+    })
+}
+
+fn git_source_spec(url: &str, explicit_ref: Option<String>) -> GitSourceSpec {
+    if let Some(spec) = parse_github_web_url(url, explicit_ref.clone()) {
+        return spec;
+    }
+    GitSourceSpec {
+        clone_url: url.trim().to_string(),
+        git_ref: explicit_ref,
+        subpath: None,
+    }
+}
+
+fn parse_github_web_url(url: &str, explicit_ref: Option<String>) -> Option<GitSourceSpec> {
+    let clean = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/');
+    let rest = clean
+        .strip_prefix("https://github.com/")
+        .or_else(|| clean.strip_prefix("http://github.com/"))
+        .or_else(|| clean.strip_prefix("https://www.github.com/"))
+        .or_else(|| clean.strip_prefix("http://www.github.com/"))?;
+    let parts: Vec<&str> = rest.split('/').filter(|part| !part.is_empty()).collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let owner = parts[0];
+    let repo_name = parts[1].trim_end_matches(".git");
+    let clone_url = format!("https://github.com/{owner}/{repo_name}.git");
+    if parts.len() >= 4 && (parts[2] == "tree" || parts[2] == "blob") {
+        let git_ref = explicit_ref.or_else(|| Some(parts[3].to_string()));
+        let mut subpath_parts: Vec<&str> = parts[4..].to_vec();
+        if parts[2] == "blob" && subpath_parts.last() == Some(&"SKILL.md") {
+            subpath_parts.pop();
+        }
+        let subpath = (!subpath_parts.is_empty()).then(|| {
+            let mut path = PathBuf::new();
+            for part in subpath_parts {
+                path.push(part);
+            }
+            path
+        });
+        return Some(GitSourceSpec {
+            clone_url,
+            git_ref,
+            subpath,
+        });
+    }
+    Some(GitSourceSpec {
+        clone_url,
+        git_ref: explicit_ref,
+        subpath: None,
+    })
+}
+
+fn git_cache_path(repo: &AgentsRepo, name: &str, spec: &GitSourceSpec) -> PathBuf {
+    let key = format!(
+        "{}|{}|{}",
+        spec.clone_url,
+        spec.git_ref.as_deref().unwrap_or_default(),
+        spec.subpath
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default()
+    );
+    Path::new(&repo.root)
+        .join(".agents-manager")
+        .join("source-cache")
+        .join(format!("{}-{}", slugify(name), stable_hash(&key)))
+}
+
+fn ensure_git_cache(
+    spec: &GitSourceSpec,
+    cache_path: &Path,
+    refresh: bool,
+) -> Result<Vec<String>, String> {
+    let mut warnings = Vec::new();
+    let git_dir = cache_path.join(".git");
+    if git_dir.is_dir() {
+        if refresh {
+            let mut fetch = Command::new("git");
+            fetch
+                .arg("-C")
+                .arg(cache_path)
+                .arg("fetch")
+                .arg("--depth")
+                .arg("1");
+            if let Some(git_ref) = &spec.git_ref {
+                fetch.arg("origin").arg(git_ref);
+            }
+            let output = fetch.output().map_err(|error| error.to_string())?;
+            if !output.status.success() {
+                warnings.push(format!(
+                    "Git refresh failed; using existing cache. {}",
+                    command_error(&output)
+                ));
+            }
+        }
+        if let Some(git_ref) = &spec.git_ref {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(cache_path)
+                .arg("checkout")
+                .arg(git_ref)
+                .output()
+                .map_err(|error| error.to_string())?;
+            if !output.status.success() {
+                warnings.push(format!(
+                    "Git checkout `{git_ref}` failed; using existing checkout. {}",
+                    command_error(&output)
+                ));
+            }
+        }
+        return Ok(warnings);
+    }
+    if cache_path.exists() {
+        return Err(format!(
+            "Git cache path exists but is not a Git checkout: {}",
+            repo::display_path(cache_path)
+        ));
+    }
+
+    let parent = cache_path
+        .parent()
+        .ok_or_else(|| "Git cache path has no parent directory.".to_string())?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let mut clone = Command::new("git");
+    clone.arg("clone").arg("--depth").arg("1");
+    if let Some(git_ref) = &spec.git_ref {
+        clone.arg("--branch").arg(git_ref);
+    }
+    let output = clone
+        .arg(&spec.clone_url)
+        .arg(cache_path)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok(warnings)
+    } else {
+        Err(format!("Git clone failed. {}", command_error(&output)))
+    }
+}
+
+fn command_error(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    if detail.is_empty() {
+        format!("exit code: {}", output.status)
+    } else {
+        detail.to_string()
+    }
+}
+
+fn resolve_skill_paths(
+    root: &Path,
+    source: &ResourceSourceConfig,
+) -> (Option<PathBuf>, Vec<PathBuf>) {
+    if !source.skill_paths.is_empty() {
+        return (
+            None,
+            source
+                .skill_paths
+                .iter()
+                .map(|path| join_source_child(root, path))
+                .filter(|path| path.join("SKILL.md").is_file())
+                .collect(),
+        );
+    }
+    if let Some(skills_path) = source.skills_path.as_deref() {
+        let path = join_source_child(root, skills_path);
+        if path.join("SKILL.md").is_file() {
+            return (None, vec![path]);
+        }
+        return (path.is_dir().then_some(path), Vec::new());
+    }
+    let conventional = root.join("skills");
+    if conventional.is_dir() {
+        return (Some(conventional), Vec::new());
+    }
+    if root.join("SKILL.md").is_file() {
+        return (None, vec![root.to_path_buf()]);
+    }
+    if has_skill_children(root) {
+        return (Some(root.to_path_buf()), Vec::new());
+    }
+    (None, Vec::new())
+}
+
+fn resolve_command_paths(
+    root: &Path,
+    source: &ResourceSourceConfig,
+) -> (Option<PathBuf>, Vec<PathBuf>) {
+    if !source.command_paths.is_empty() {
+        return (
+            None,
+            source
+                .command_paths
+                .iter()
+                .map(|path| join_source_child(root, path))
+                .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "md"))
+                .collect(),
+        );
+    }
+    if let Some(commands_path) = source.commands_path.as_deref() {
+        let path = join_source_child(root, commands_path);
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+            return (None, vec![path]);
+        }
+        return (path.is_dir().then_some(path), Vec::new());
+    }
+    let conventional = root.join("commands");
+    if conventional.is_dir() {
+        return (Some(conventional), Vec::new());
+    }
+    (None, Vec::new())
+}
+
+fn join_source_child(root: &Path, child: &str) -> PathBuf {
+    let child_path = PathBuf::from(child);
+    if child_path.is_absolute() {
+        child_path
+    } else {
+        root.join(child_path)
+    }
+}
+
+fn has_skill_children(path: &Path) -> bool {
+    repo::list_dirs(path)
+        .into_iter()
+        .any(|name| path.join(name).join("SKILL.md").is_file())
+}
+
+fn relative_source_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn pattern_allowed(candidates: &[&str], includes: &[String], excludes: &[String]) -> bool {
+    let included = includes.is_empty()
+        || includes.iter().any(|pattern| {
+            candidates
+                .iter()
+                .any(|candidate| glob_match(pattern, candidate))
+        });
+    if !included {
+        return false;
+    }
+    !excludes.iter().any(|pattern| {
+        candidates
+            .iter()
+            .any(|candidate| glob_match(pattern, candidate))
+    })
+}
+
+fn glob_match(pattern: &str, value: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return false;
+    }
+    glob_match_bytes(pattern.as_bytes(), value.as_bytes())
+}
+
+fn glob_match_bytes(pattern: &[u8], value: &[u8]) -> bool {
+    let (mut pattern_index, mut value_index) = (0, 0);
+    let mut star_index = None;
+    let mut star_value_index = 0;
+
+    while value_index < value.len() {
+        if pattern_index < pattern.len()
+            && (pattern[pattern_index] == b'?' || pattern[pattern_index] == value[value_index])
+        {
+            pattern_index += 1;
+            value_index += 1;
+        } else if pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+            star_index = Some(pattern_index);
+            star_value_index = value_index;
+            pattern_index += 1;
+        } else if let Some(star) = star_index {
+            pattern_index = star + 1;
+            star_value_index += 1;
+            value_index = star_value_index;
+        } else {
+            return false;
+        }
+    }
+
+    while pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+        pattern_index += 1;
+    }
+    pattern_index == pattern.len()
+}
+
+fn slugify(value: &str) -> String {
+    let slug: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = slug.trim_matches('-');
+    if trimmed.is_empty() {
+        "source".into()
+    } else {
+        trimmed.into()
+    }
+}
+
+fn stable_hash(value: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn read_skills(
+    repo: &AgentsRepo,
+    installs: BTreeMap<String, String>,
+    sources: &[LoadedResourceSource],
+    warnings: &mut Vec<String>,
+) -> Vec<SkillItem> {
+    let mut seen = BTreeSet::new();
+    let mut items: Vec<SkillItem> = repo::list_dirs(&repo.paths.skills)
         .into_iter()
         .map(|name| {
             let path = Path::new(&repo.paths.skills).join(&name);
             let file = path.join("SKILL.md");
-            let frontmatter = repo::read_text(&file)
-                .map(|text| repo::parse_frontmatter(&text))
-                .unwrap_or_default();
+            let text = repo::read_text(&file).unwrap_or_default();
+            let frontmatter = repo::parse_frontmatter(&text);
+            let item_name = frontmatter.get("name").cloned().unwrap_or(name);
+            seen.insert(item_name.clone());
             SkillItem {
-                name: frontmatter.get("name").cloned().unwrap_or(name),
+                name: item_name,
                 description: frontmatter.get("description").cloned().unwrap_or_default(),
                 path: repo::display_path(&path),
                 file: repo::display_path(&file),
+                source_name: "Local".into(),
+                source_path: repo.paths.skills.clone(),
+                source_kind: "local".into(),
+                frontmatter,
+                preview: truncate_preview(&text),
                 installs: installs.clone(),
             }
         })
-        .collect()
+        .collect();
+
+    for source in sources {
+        let Some(skills_dir) = &source.skills_dir else {
+            for skill_dir in &source.skill_dirs {
+                read_source_skill_dir(
+                    source, skill_dir, &mut seen, warnings, &mut items, &installs,
+                );
+            }
+            continue;
+        };
+        for folder_name in repo::list_dirs(skills_dir) {
+            let path = skills_dir.join(&folder_name);
+            read_source_skill_dir(source, &path, &mut seen, warnings, &mut items, &installs);
+        }
+        for skill_dir in &source.skill_dirs {
+            read_source_skill_dir(
+                source, skill_dir, &mut seen, warnings, &mut items, &installs,
+            );
+        }
+    }
+
+    items
 }
 
-fn read_commands(repo: &AgentsRepo, installs: BTreeMap<String, String>) -> Vec<CommandItem> {
-    repo::list_markdown_files(&repo.paths.commands)
+fn read_source_skill_dir(
+    source: &LoadedResourceSource,
+    path: &Path,
+    seen: &mut BTreeSet<String>,
+    warnings: &mut Vec<String>,
+    items: &mut Vec<SkillItem>,
+    installs: &BTreeMap<String, String>,
+) {
+    let file = path.join("SKILL.md");
+    let text = repo::read_text(&file).unwrap_or_default();
+    let frontmatter = repo::parse_frontmatter(&text);
+    let folder_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| source.name.clone());
+    let item_name = frontmatter
+        .get("name")
+        .cloned()
+        .unwrap_or_else(|| folder_name.clone());
+    let relative_path = relative_source_path(&source.resolved_path, path);
+    if !pattern_allowed(
+        &[&item_name, &folder_name, &relative_path],
+        &source.include_skills,
+        &source.exclude_skills,
+    ) {
+        return;
+    }
+    if !seen.insert(item_name.clone()) {
+        warnings.push(format!(
+            "Skipped skill `{item_name}` from `{}` because a local or earlier source skill has the same name.",
+            source.name
+        ));
+        return;
+    }
+    items.push(SkillItem {
+        name: item_name,
+        description: frontmatter.get("description").cloned().unwrap_or_default(),
+        path: repo::display_path(path),
+        file: repo::display_path(&file),
+        source_name: source.name.clone(),
+        source_path: repo::display_path(&source.resolved_path),
+        source_kind: source.source_kind.clone(),
+        frontmatter,
+        preview: truncate_preview(&text),
+        installs: source_only_installs(installs),
+    });
+}
+
+fn read_commands(
+    repo: &AgentsRepo,
+    installs: BTreeMap<String, String>,
+    sources: &[LoadedResourceSource],
+    warnings: &mut Vec<String>,
+) -> Vec<CommandItem> {
+    let mut seen = BTreeSet::new();
+    let mut items: Vec<CommandItem> = repo::list_markdown_files(&repo.paths.commands)
         .into_iter()
         .map(|name| {
             let file = Path::new(&repo.paths.commands).join(&name);
-            let frontmatter = repo::read_text(&file)
-                .map(|text| repo::parse_frontmatter(&text))
-                .unwrap_or_default();
+            let text = repo::read_text(&file).unwrap_or_default();
+            let frontmatter = repo::parse_frontmatter(&text);
+            let command_name = name.trim_end_matches(".md").to_string();
+            seen.insert(command_name.clone());
             CommandItem {
-                name: name.trim_end_matches(".md").to_string(),
+                name: command_name,
                 description: frontmatter.get("description").cloned().unwrap_or_default(),
+                argument_hint: frontmatter
+                    .get("argument-hint")
+                    .or_else(|| frontmatter.get("argument_hint"))
+                    .cloned()
+                    .unwrap_or_default(),
                 path: repo::display_path(&file),
+                source_name: "Local".into(),
+                source_path: repo.paths.commands.clone(),
+                source_kind: "local".into(),
+                frontmatter,
+                preview: truncate_preview(&text),
                 installs: installs.clone(),
             }
         })
+        .collect();
+
+    for source in sources {
+        let Some(commands_dir) = &source.commands_dir else {
+            for command_file in &source.command_files {
+                read_source_command_file(
+                    source,
+                    command_file,
+                    &mut seen,
+                    warnings,
+                    &mut items,
+                    &installs,
+                );
+            }
+            continue;
+        };
+        for file_name in repo::list_markdown_files(commands_dir) {
+            let file = commands_dir.join(&file_name);
+            read_source_command_file(source, &file, &mut seen, warnings, &mut items, &installs);
+        }
+        for command_file in &source.command_files {
+            read_source_command_file(
+                source,
+                command_file,
+                &mut seen,
+                warnings,
+                &mut items,
+                &installs,
+            );
+        }
+    }
+
+    items
+}
+
+fn read_source_command_file(
+    source: &LoadedResourceSource,
+    file: &Path,
+    seen: &mut BTreeSet<String>,
+    warnings: &mut Vec<String>,
+    items: &mut Vec<CommandItem>,
+    installs: &BTreeMap<String, String>,
+) {
+    let text = repo::read_text(file).unwrap_or_default();
+    let frontmatter = repo::parse_frontmatter(&text);
+    let Some(file_name) = file
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+    else {
+        return;
+    };
+    let command_name = file_name.trim_end_matches(".md").to_string();
+    let relative_path = relative_source_path(&source.resolved_path, file);
+    if !pattern_allowed(
+        &[&command_name, &relative_path],
+        &source.include_commands,
+        &source.exclude_commands,
+    ) {
+        return;
+    }
+    if !seen.insert(command_name.clone()) {
+        warnings.push(format!(
+            "Skipped command `/{command_name}` from `{}` because a local or earlier source command has the same name.",
+            source.name
+        ));
+        return;
+    }
+    items.push(CommandItem {
+        name: command_name,
+        description: frontmatter.get("description").cloned().unwrap_or_default(),
+        argument_hint: frontmatter
+            .get("argument-hint")
+            .or_else(|| frontmatter.get("argument_hint"))
+            .cloned()
+            .unwrap_or_default(),
+        path: repo::display_path(file),
+        source_name: source.name.clone(),
+        source_path: repo::display_path(&source.resolved_path),
+        source_kind: source.source_kind.clone(),
+        frontmatter,
+        preview: truncate_preview(&text),
+        installs: source_only_installs(installs),
+    });
+}
+
+fn source_only_installs(installs: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    installs
+        .keys()
+        .map(|tool| (tool.clone(), "source-only".into()))
         .collect()
 }
 
@@ -122,13 +949,27 @@ fn read_registry(repo: &AgentsRepo) -> McpRegistry {
     let mut servers = Vec::new();
     if let Some(map) = parsed.get("servers").and_then(Value::as_object) {
         for (name, value) in map {
-            let url = value.get("url").and_then(Value::as_str).unwrap_or_default().to_string();
-            let command = value.get("command").and_then(Value::as_str).unwrap_or_default().to_string();
+            let url = value
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let command = value
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
             let server_type = value
                 .get("type")
                 .and_then(Value::as_str)
                 .map(ToString::to_string)
-                .unwrap_or_else(|| if url.is_empty() { "local".into() } else { "remote".into() });
+                .unwrap_or_else(|| {
+                    if url.is_empty() {
+                        "local".into()
+                    } else {
+                        "remote".into()
+                    }
+                });
             let targets = value
                 .get("targets")
                 .and_then(Value::as_object)
@@ -141,22 +982,43 @@ fn read_registry(repo: &AgentsRepo) -> McpRegistry {
                 .unwrap_or_default();
             servers.push(McpServerItem {
                 name: name.clone(),
-                description: value.get("description").and_then(Value::as_str).unwrap_or_default().to_string(),
+                description: value
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
                 server_type: server_type.clone(),
                 transport: value
                     .get("transport")
                     .and_then(Value::as_str)
                     .map(ToString::to_string)
-                    .unwrap_or_else(|| if server_type == "remote" { "http".into() } else { "stdio".into() }),
+                    .unwrap_or_else(|| {
+                        if server_type == "remote" {
+                            "http".into()
+                        } else {
+                            "stdio".into()
+                        }
+                    }),
                 url,
                 command,
                 args: value
                     .get("args")
                     .and_then(Value::as_array)
-                    .map(|args| args.iter().filter_map(Value::as_str).map(ToString::to_string).collect())
+                    .map(|args| {
+                        args.iter()
+                            .filter_map(Value::as_str)
+                            .map(ToString::to_string)
+                            .collect()
+                    })
                     .unwrap_or_default(),
-                enabled: value.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+                has_headers: value.get("headers").is_some(),
+                has_environment: value.get("environment").is_some() || value.get("env").is_some(),
+                enabled: value
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
                 targets,
+                raw_json: serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()),
             });
         }
     }
@@ -175,9 +1037,18 @@ fn read_tools(repo: &AgentsRepo) -> Vec<ToolStatus> {
             "claude-code",
             "Claude Code",
             BTreeMap::from([
-                ("globalInstructions".into(), path_join(&repo.home, &[".claude", "CLAUDE.md"])),
-                ("skills".into(), path_join(&repo.home, &[".claude", "skills"])),
-                ("commands".into(), path_join(&repo.home, &[".claude", "commands"])),
+                (
+                    "globalInstructions".into(),
+                    path_join(&repo.home, &[".claude", "CLAUDE.md"]),
+                ),
+                (
+                    "skills".into(),
+                    path_join(&repo.home, &[".claude", "skills"]),
+                ),
+                (
+                    "commands".into(),
+                    path_join(&repo.home, &[".claude", "commands"]),
+                ),
             ]),
             repo,
         ),
@@ -185,10 +1056,16 @@ fn read_tools(repo: &AgentsRepo) -> Vec<ToolStatus> {
             "codex",
             "Codex",
             BTreeMap::from([
-                ("globalInstructions".into(), path_join(&repo.codex_home, &["AGENTS.md"])),
+                (
+                    "globalInstructions".into(),
+                    path_join(&repo.codex_home, &["AGENTS.md"]),
+                ),
                 ("skills".into(), path_join(&repo.codex_home, &["skills"])),
                 ("commands".into(), path_join(&repo.codex_home, &["prompts"])),
-                ("config".into(), path_join(&repo.codex_home, &["config.toml"])),
+                (
+                    "config".into(),
+                    path_join(&repo.codex_home, &["config.toml"]),
+                ),
             ]),
             repo,
         ),
@@ -196,10 +1073,22 @@ fn read_tools(repo: &AgentsRepo) -> Vec<ToolStatus> {
             "opencode",
             "OpenCode",
             BTreeMap::from([
-                ("globalInstructions".into(), path_join(&repo.home, &[".config", "opencode", "AGENTS.md"])),
-                ("skills".into(), path_join(&repo.home, &[".config", "opencode", "skills"])),
-                ("commands".into(), path_join(&repo.home, &[".config", "opencode", "commands"])),
-                ("config".into(), path_join(&repo.home, &[".config", "opencode", "opencode.json"])),
+                (
+                    "globalInstructions".into(),
+                    path_join(&repo.home, &[".config", "opencode", "AGENTS.md"]),
+                ),
+                (
+                    "skills".into(),
+                    path_join(&repo.home, &[".config", "opencode", "skills"]),
+                ),
+                (
+                    "commands".into(),
+                    path_join(&repo.home, &[".config", "opencode", "commands"]),
+                ),
+                (
+                    "config".into(),
+                    path_join(&repo.home, &[".config", "opencode", "opencode.json"]),
+                ),
             ]),
             repo,
         ),
@@ -209,26 +1098,53 @@ fn read_tools(repo: &AgentsRepo) -> Vec<ToolStatus> {
     tools
 }
 
-fn link_tool(id: &str, label: &str, paths: BTreeMap<String, String>, repo: &AgentsRepo) -> ToolStatus {
+fn link_tool(
+    id: &str,
+    label: &str,
+    paths: BTreeMap<String, String>,
+    repo: &AgentsRepo,
+) -> ToolStatus {
     let resources = BTreeMap::from([
-        ("globalInstructions".into(), symlink_status(paths.get("globalInstructions").unwrap(), &repo.paths.agents)),
-        ("skills".into(), symlink_status(paths.get("skills").unwrap(), &repo.paths.skills)),
-        ("commands".into(), symlink_status(paths.get("commands").unwrap(), &repo.paths.commands)),
+        (
+            "globalInstructions".into(),
+            symlink_status(paths.get("globalInstructions").unwrap(), &repo.paths.agents),
+        ),
+        (
+            "skills".into(),
+            symlink_status(paths.get("skills").unwrap(), &repo.paths.skills),
+        ),
+        (
+            "commands".into(),
+            symlink_status(paths.get("commands").unwrap(), &repo.paths.commands),
+        ),
     ]);
     ToolStatus {
         id: id.into(),
         label: label.into(),
-        status: rollup(resources.values().map(|resource| resource.status.clone()).collect()),
+        status: rollup(
+            resources
+                .values()
+                .map(|resource| resource.status.clone())
+                .collect(),
+        ),
         paths,
         resources,
     }
 }
 
 fn copilot_tool(repo: &AgentsRepo) -> ToolStatus {
-    let env_path = path_join(&repo.home, &[".config", "agents", "github-copilot-cli.env.sh"]);
+    let env_path = path_join(
+        &repo.home,
+        &[".config", "agents", "github-copilot-cli.env.sh"],
+    );
     let text = repo::read_text(&env_path).unwrap_or_default();
-    let installed = text.contains(&format!("COPILOT_CUSTOM_INSTRUCTIONS_DIRS=\"{}\"", repo.agents_home))
-        && text.contains(&format!("COPILOT_SKILLS_DIRS=\"{}/skills\"", repo.agents_home));
+    let installed = text.contains(&format!(
+        "COPILOT_CUSTOM_INSTRUCTIONS_DIRS=\"{}\"",
+        repo.agents_home
+    )) && text.contains(&format!(
+        "COPILOT_SKILLS_DIRS=\"{}/skills\"",
+        repo.agents_home
+    ));
     let exists = repo::path_exists(&env_path);
     let status = if installed {
         "installed"
@@ -267,12 +1183,16 @@ fn symlink_status(target: &str, expected: &str) -> InstallStatus {
                     target_path: target.into(),
                     expected_path: expected.into(),
                     actual_path: target.into(),
-                    message: "Path exists but is not a symlink managed by the portable agents repo.".into(),
+                    message:
+                        "Path exists but is not a symlink managed by the portable agents repo."
+                            .into(),
                 };
             }
             let actual = fs::read_link(target).unwrap_or_default();
-            let target_resolved = fs::canonicalize(target).unwrap_or_else(|_| PathBuf::from(target));
-            let expected_resolved = fs::canonicalize(expected).unwrap_or_else(|_| PathBuf::from(expected));
+            let target_resolved =
+                fs::canonicalize(target).unwrap_or_else(|_| PathBuf::from(target));
+            let expected_resolved =
+                fs::canonicalize(expected).unwrap_or_else(|_| PathBuf::from(expected));
             let installed = target_resolved == expected_resolved;
             InstallStatus {
                 status: if installed { "installed" } else { "drift" }.into(),
@@ -309,61 +1229,165 @@ fn symlink_status(target: &str, expected: &str) -> InstallStatus {
 fn installs_for(tools: &[ToolStatus], resource_name: &str) -> BTreeMap<String, String> {
     tools
         .iter()
-        .filter_map(|tool| tool.resources.get(resource_name).map(|resource| (tool.id.clone(), resource.status.clone())))
+        .filter_map(|tool| {
+            tool.resources
+                .get(resource_name)
+                .map(|resource| (tool.id.clone(), resource.status.clone()))
+        })
         .collect()
 }
 
-fn read_mcp_statuses(repo: &AgentsRepo, servers: &[McpServerItem]) -> BTreeMap<String, Vec<McpInstallStatus>> {
+fn read_mcp_statuses(
+    repo: &AgentsRepo,
+    servers: &[McpServerItem],
+) -> BTreeMap<String, Vec<McpInstallStatus>> {
     BTreeMap::from([
         ("claude-code".into(), claude_mcp_statuses(servers)),
-        ("codex".into(), servers.iter().map(|server| codex_mcp_status(repo, server)).collect()),
-        ("opencode".into(), servers.iter().map(|server| opencode_mcp_status(repo, server)).collect()),
+        (
+            "codex".into(),
+            servers
+                .iter()
+                .map(|server| codex_mcp_status(repo, server))
+                .collect(),
+        ),
+        (
+            "opencode".into(),
+            servers
+                .iter()
+                .map(|server| opencode_mcp_status(repo, server))
+                .collect(),
+        ),
     ])
 }
 
 fn codex_mcp_status(repo: &AgentsRepo, server: &McpServerItem) -> McpInstallStatus {
     let config = path_join(&repo.codex_home, &["config.toml"]);
     let Some(text) = repo::read_text(&config) else {
-        return mcp_status("codex", &server.name, "missing", &config, "Codex config.toml is missing.");
+        return mcp_status_with_type(
+            "codex",
+            &server.name,
+            &server.server_type,
+            "missing",
+            &config,
+            "Codex config.toml is missing.",
+        );
     };
     let has_table = text.contains(&format!("[mcp_servers.{}]", server.name))
         || text.contains(&format!("[mcp_servers.\"{}\"]", server.name));
     if !has_table {
-        return mcp_status("codex", &server.name, "missing", &config, "No matching Codex MCP table found.");
+        return mcp_status_with_type(
+            "codex",
+            &server.name,
+            &server.server_type,
+            "missing",
+            &config,
+            "No matching Codex MCP table found.",
+        );
     }
-    let expected = if server.server_type == "remote" { &server.url } else { &server.command };
-    if expected.is_empty() || text.contains(expected) {
-        mcp_status("codex", &server.name, "installed", &config, "Matching Codex MCP entry found.")
+    let expected = if server.server_type == "remote" {
+        &server.url
     } else {
-        mcp_status("codex", &server.name, "drift", &config, "Codex MCP entry points elsewhere.")
+        &server.command
+    };
+    if expected.is_empty() || text.contains(expected) {
+        mcp_status_with_type(
+            "codex",
+            &server.name,
+            &server.server_type,
+            "installed",
+            &config,
+            "Matching Codex MCP entry found.",
+        )
+    } else {
+        mcp_status_with_type(
+            "codex",
+            &server.name,
+            &server.server_type,
+            "drift",
+            &config,
+            "Codex MCP entry points elsewhere.",
+        )
     }
 }
 
 fn opencode_mcp_status(repo: &AgentsRepo, server: &McpServerItem) -> McpInstallStatus {
     let config = path_join(&repo.home, &[".config", "opencode", "opencode.json"]);
     let Some(text) = repo::read_text(&config) else {
-        return mcp_status("opencode", &server.name, "missing", &config, "OpenCode config is missing.");
+        return mcp_status_with_type(
+            "opencode",
+            &server.name,
+            &server.server_type,
+            "missing",
+            &config,
+            "OpenCode config is missing.",
+        );
     };
     let cleaned = strip_json_comments(&text);
     let parsed: Value = match serde_json::from_str(&cleaned) {
         Ok(value) => value,
-        Err(error) => return mcp_status("opencode", &server.name, "invalid", &config, &error.to_string()),
+        Err(error) => {
+            return mcp_status_with_type(
+                "opencode",
+                &server.name,
+                &server.server_type,
+                "invalid",
+                &config,
+                &error.to_string(),
+            )
+        }
     };
     let Some(entry) = parsed.get("mcp").and_then(|mcp| mcp.get(&server.name)) else {
-        return mcp_status("opencode", &server.name, "missing", &config, "No matching OpenCode MCP entry found.");
+        return mcp_status_with_type(
+            "opencode",
+            &server.name,
+            &server.server_type,
+            "missing",
+            &config,
+            "No matching OpenCode MCP entry found.",
+        );
     };
-    let expected = if server.server_type == "remote" { &server.url } else { &server.command };
-    let actual = if server.server_type == "remote" {
-        entry.get("url").and_then(Value::as_str).unwrap_or_default().to_string()
-    } else if let Some(command) = entry.get("command").and_then(Value::as_array) {
-        command.first().and_then(Value::as_str).unwrap_or_default().to_string()
+    let expected = if server.server_type == "remote" {
+        &server.url
     } else {
-        entry.get("command").and_then(Value::as_str).unwrap_or_default().to_string()
+        &server.command
+    };
+    let actual = if server.server_type == "remote" {
+        entry
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    } else if let Some(command) = entry.get("command").and_then(Value::as_array) {
+        command
+            .first()
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    } else {
+        entry
+            .get("command")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
     };
     if expected.is_empty() || actual == *expected {
-        mcp_status("opencode", &server.name, "installed", &config, "Matching OpenCode MCP entry found.")
+        mcp_status_with_type(
+            "opencode",
+            &server.name,
+            &server.server_type,
+            "installed",
+            &config,
+            "Matching OpenCode MCP entry found.",
+        )
     } else {
-        mcp_status("opencode", &server.name, "drift", &config, "OpenCode MCP entry points elsewhere.")
+        mcp_status_with_type(
+            "opencode",
+            &server.name,
+            &server.server_type,
+            "drift",
+            &config,
+            "OpenCode MCP entry points elsewhere.",
+        )
     }
 }
 
@@ -371,52 +1395,143 @@ fn claude_mcp_statuses(servers: &[McpServerItem]) -> Vec<McpInstallStatus> {
     if !command_available("claude") {
         return servers
             .iter()
-            .map(|server| mcp_status("claude-code", &server.name, "cli-missing", "claude mcp list", "Claude Code CLI is not available on PATH."))
+            .map(|server| {
+                mcp_status_with_type(
+                    "claude-code",
+                    &server.name,
+                    &server.server_type,
+                    "cli-missing",
+                    "claude mcp list",
+                    "Claude Code CLI is not available on PATH.",
+                )
+            })
             .collect();
     }
     let output = Command::new("claude").args(["mcp", "list"]).output();
     let Ok(output) = output else {
         return servers
             .iter()
-            .map(|server| mcp_status("claude-code", &server.name, "unknown", "claude mcp list", "Unable to read Claude Code MCP list."))
+            .map(|server| {
+                mcp_status_with_type(
+                    "claude-code",
+                    &server.name,
+                    &server.server_type,
+                    "unknown",
+                    "claude mcp list",
+                    "Unable to read Claude Code MCP list.",
+                )
+            })
             .collect();
     };
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return servers
             .iter()
-            .map(|server| mcp_status("claude-code", &server.name, "unknown", "claude mcp list", &message))
+            .map(|server| {
+                mcp_status_with_type(
+                    "claude-code",
+                    &server.name,
+                    &server.server_type,
+                    "unknown",
+                    "claude mcp list",
+                    &message,
+                )
+            })
             .collect();
     }
-    let text = format!("{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     servers
         .iter()
         .map(|server| {
             if !text.contains(&server.name) {
-                return mcp_status("claude-code", &server.name, "missing", "claude mcp list", "Claude Code MCP list does not include this server.");
+                return mcp_status_with_type(
+                    "claude-code",
+                    &server.name,
+                    &server.server_type,
+                    "missing",
+                    "claude mcp list",
+                    "Claude Code MCP list does not include this server.",
+                );
             }
-            let details = Command::new("claude").args(["mcp", "get", &server.name]).output();
-            let expected = if server.server_type == "remote" { &server.url } else { &server.command };
+            let details = Command::new("claude")
+                .args(["mcp", "get", &server.name])
+                .output();
+            let expected = if server.server_type == "remote" {
+                &server.url
+            } else {
+                &server.command
+            };
             if let Ok(details) = details {
-                let detail_text = format!("{}\n{}", String::from_utf8_lossy(&details.stdout), String::from_utf8_lossy(&details.stderr));
-                if details.status.success() && !expected.is_empty() && !detail_text.contains(expected) {
-                    return mcp_status("claude-code", &server.name, "drift", &format!("claude mcp get {}", server.name), "Claude Code MCP entry points elsewhere.");
+                let detail_text = format!(
+                    "{}\n{}",
+                    String::from_utf8_lossy(&details.stdout),
+                    String::from_utf8_lossy(&details.stderr)
+                );
+                if details.status.success()
+                    && !expected.is_empty()
+                    && !detail_text.contains(expected)
+                {
+                    return mcp_status_with_type(
+                        "claude-code",
+                        &server.name,
+                        &server.server_type,
+                        "drift",
+                        &format!("claude mcp get {}", server.name),
+                        "Claude Code MCP entry points elsewhere.",
+                    );
                 }
             }
-            mcp_status("claude-code", &server.name, "installed", &format!("claude mcp get {}", server.name), "Claude Code MCP entry found.")
+            mcp_status_with_type(
+                "claude-code",
+                &server.name,
+                &server.server_type,
+                "installed",
+                &format!("claude mcp get {}", server.name),
+                "Claude Code MCP entry found.",
+            )
         })
         .collect()
 }
 
-fn mcp_status(tool: &str, server: &str, status: &str, path: &str, message: &str) -> McpInstallStatus {
+fn mcp_status_with_type(
+    tool: &str,
+    server: &str,
+    server_type: &str,
+    status: &str,
+    path: &str,
+    message: &str,
+) -> McpInstallStatus {
+    let auth_command = auth::auth_command_for_server(tool, server, server_type);
+    let auth_status = if status == "installed" && auth_command.is_some() {
+        Some(auth::check_auth_availability(tool).0)
+    } else if status == "cli-missing" {
+        Some("cli-missing".into())
+    } else if auth_command.is_none() {
+        Some("not-supported".into())
+    } else {
+        Some("unknown".into())
+    };
     McpInstallStatus {
         tool: tool.into(),
         server: server.into(),
         status: status.into(),
         path: path.into(),
         message: message.into(),
-        auth_status: None,
-        auth_command: None,
+        auth_status,
+        auth_command,
+    }
+}
+
+fn truncate_preview(text: &str) -> String {
+    const LIMIT: usize = 16_000;
+    if text.len() <= LIMIT {
+        text.to_string()
+    } else {
+        format!("{}...\n\n<preview truncated>", &text[..LIMIT])
     }
 }
 
@@ -424,15 +1539,22 @@ fn command_available(command: &str) -> bool {
     let result = if cfg!(windows) {
         Command::new("where").arg(command).output()
     } else {
-        Command::new("sh").args(["-c", &format!("command -v {}", command)]).output()
+        Command::new("sh")
+            .args(["-c", &format!("command -v {}", command)])
+            .output()
     };
-    result.map(|output| output.status.success()).unwrap_or(false)
+    result
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 fn rollup(statuses: Vec<String>) -> String {
     if statuses.iter().all(|status| status == "installed") {
         "installed".into()
-    } else if statuses.iter().all(|status| status == "missing" || status == "cli-missing") {
+    } else if statuses
+        .iter()
+        .all(|status| status == "missing" || status == "cli-missing")
+    {
         "missing".into()
     } else {
         "drift".into()
@@ -481,4 +1603,253 @@ fn path_join(base: &str, segments: &[&str]) -> String {
         path.push(segment);
     }
     repo::display_path(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn build_state_merges_configured_source_skills_and_commands() {
+        let root = temp_path("agents-manager-source-test");
+        let repo_root = root.join("repo");
+        let source_root = root.join("source");
+
+        fs::create_dir_all(repo_root.join("skills/local")).unwrap();
+        fs::create_dir_all(repo_root.join("commands")).unwrap();
+        fs::create_dir_all(repo_root.join("mcp")).unwrap();
+        fs::create_dir_all(source_root.join("skills/external")).unwrap();
+        fs::create_dir_all(source_root.join("commands")).unwrap();
+
+        fs::write(repo_root.join("AGENTS.md"), "# Test Agents\n").unwrap();
+        fs::write(repo_root.join("mcp/servers.json"), r#"{"servers":{}}"#).unwrap();
+        fs::write(
+            repo_root.join("skills/local/SKILL.md"),
+            "---\nname: Local Skill\ndescription: Local description\n---\n\nLocal body\n",
+        )
+        .unwrap();
+        fs::write(
+            repo_root.join("commands/local.md"),
+            "---\ndescription: Local command\n---\n\nLocal command body\n",
+        )
+        .unwrap();
+        fs::write(
+            source_root.join("skills/external/SKILL.md"),
+            "---\nname: External Skill\ndescription: External description\n---\n\nExternal body\n",
+        )
+        .unwrap();
+        fs::write(
+            source_root.join("commands/external.md"),
+            "---\ndescription: External command\n---\n\nExternal command body\n",
+        )
+        .unwrap();
+        fs::write(
+            repo_root.join(SOURCES_FILENAME),
+            format!(
+                r#"{{
+  "sources": [
+    {{
+      "name": "external-source",
+      "path": "{}",
+      "skills": true,
+      "commands": true
+    }}
+  ]
+}}"#,
+                source_root.to_string_lossy().replace('\\', "\\\\")
+            ),
+        )
+        .unwrap();
+
+        let state = build_state(Some(repo::display_path(&repo_root)));
+
+        assert!(state.source_config.exists);
+        assert!(state.source_config.valid);
+        assert_eq!(state.source_config.sources.len(), 1);
+        assert_eq!(state.source_config.sources[0].status, "loaded");
+
+        let external_skill = state
+            .skills
+            .iter()
+            .find(|skill| skill.name == "External Skill")
+            .expect("external skill should be merged into app state");
+        assert_eq!(external_skill.source_name, "external-source");
+        assert_eq!(external_skill.source_kind, "external");
+        assert!(external_skill
+            .installs
+            .values()
+            .all(|status| status == "source-only"));
+
+        let external_command = state
+            .commands
+            .iter()
+            .find(|command| command.name == "external")
+            .expect("external command should be merged into app state");
+        assert_eq!(external_command.source_name, "external-source");
+        assert_eq!(external_command.source_kind, "external");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn build_state_clones_git_source_and_loads_selected_skill_paths() {
+        if !command_available("git") {
+            return;
+        }
+
+        let root = temp_path("agents-manager-git-source-test");
+        let repo_root = root.join("repo");
+        let git_root = root.join("git-source");
+
+        fs::create_dir_all(repo_root.join("skills")).unwrap();
+        fs::create_dir_all(repo_root.join("commands")).unwrap();
+        fs::create_dir_all(repo_root.join("mcp")).unwrap();
+        fs::create_dir_all(git_root.join("skills/git-skill")).unwrap();
+        fs::write(repo_root.join("AGENTS.md"), "# Test Agents\n").unwrap();
+        fs::write(repo_root.join("mcp/servers.json"), r#"{"servers":{}}"#).unwrap();
+        fs::write(
+            git_root.join("skills/git-skill/SKILL.md"),
+            "---\nname: Git Skill\ndescription: From a Git source\n---\n\nGit body\n",
+        )
+        .unwrap();
+        git(&git_root, &["init"]);
+        git(&git_root, &["branch", "-M", "main"]);
+        git(&git_root, &["add", "."]);
+        git(
+            &git_root,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "initial",
+            ],
+        );
+
+        fs::write(
+            repo_root.join(SOURCES_FILENAME),
+            format!(
+                r#"{{
+  "sources": [
+    {{
+      "name": "git-source",
+      "url": "{}",
+      "ref": "main",
+      "skills": true,
+      "commands": false,
+      "skillPaths": ["skills/git-skill"]
+    }}
+  ]
+}}"#,
+                git_root.to_string_lossy().replace('\\', "\\\\")
+            ),
+        )
+        .unwrap();
+
+        let state = build_state(Some(repo::display_path(&repo_root)));
+
+        assert_eq!(state.source_config.sources.len(), 1);
+        assert_eq!(state.source_config.sources[0].status, "loaded");
+        let skill = state
+            .skills
+            .iter()
+            .find(|skill| skill.name == "Git Skill")
+            .expect("git skill should be loaded from cloned cache");
+        assert_eq!(skill.source_name, "git-source");
+        assert_eq!(skill.source_kind, "git");
+        assert!(skill.path.contains(".agents-manager"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn include_skill_patterns_filter_source_folder_children() {
+        let root = temp_path("agents-manager-include-pattern-test");
+        let repo_root = root.join("repo");
+        let source_root = root.join("source");
+
+        fs::create_dir_all(repo_root.join("skills")).unwrap();
+        fs::create_dir_all(repo_root.join("commands")).unwrap();
+        fs::create_dir_all(repo_root.join("mcp")).unwrap();
+        fs::create_dir_all(source_root.join("skills/taste-sweet")).unwrap();
+        fs::create_dir_all(source_root.join("skills/planner")).unwrap();
+        fs::create_dir_all(source_root.join("skills/skip-me")).unwrap();
+        fs::write(repo_root.join("AGENTS.md"), "# Test Agents\n").unwrap();
+        fs::write(repo_root.join("mcp/servers.json"), r#"{"servers":{}}"#).unwrap();
+        fs::write(
+            source_root.join("skills/taste-sweet/SKILL.md"),
+            "---\nname: Taste Sweet\ndescription: Included by glob\n---\n\nBody\n",
+        )
+        .unwrap();
+        fs::write(
+            source_root.join("skills/planner/SKILL.md"),
+            "---\nname: Planner\ndescription: Included by name\n---\n\nBody\n",
+        )
+        .unwrap();
+        fs::write(
+            source_root.join("skills/skip-me/SKILL.md"),
+            "---\nname: Skip Me\ndescription: Excluded\n---\n\nBody\n",
+        )
+        .unwrap();
+        fs::write(
+            repo_root.join(SOURCES_FILENAME),
+            format!(
+                r#"{{
+  "sources": [
+    {{
+      "name": "filtered-source",
+      "path": "{}",
+      "skills": true,
+      "commands": false,
+      "includeSkills": ["taste-*", "Planner"],
+      "excludeSkills": ["skip-*"]
+    }}
+  ]
+}}"#,
+                source_root.to_string_lossy().replace('\\', "\\\\")
+            ),
+        )
+        .unwrap();
+
+        let state = build_state(Some(repo::display_path(&repo_root)));
+        let skill_names: BTreeSet<String> = state
+            .skills
+            .iter()
+            .map(|skill| skill.name.clone())
+            .collect();
+
+        assert!(skill_names.contains("Taste Sweet"));
+        assert!(skill_names.contains("Planner"));
+        assert!(!skill_names.contains("Skip Me"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_path(label: &str) -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{label}-{}-{timestamp}", std::process::id()))
+    }
+
+    fn git(cwd: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

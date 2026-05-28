@@ -3,8 +3,7 @@ use crate::models::{AgentsRepo, RepoImportPlan, RepoImportResult, ScriptPlan, Sc
 use crate::repo;
 use std::{
     collections::BTreeSet,
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
@@ -126,9 +125,13 @@ pub fn command_available(command: &str) -> bool {
     let result = if cfg!(windows) {
         Command::new("where").arg(command).output()
     } else {
-        Command::new("sh").args(["-c", &format!("command -v {}", command)]).output()
+        Command::new("sh")
+            .args(["-c", &format!("command -v {}", command)])
+            .output()
     };
-    result.map(|output| output.status.success()).unwrap_or(false)
+    result
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 pub fn open_path(target: &str) -> Result<(), String> {
@@ -162,11 +165,17 @@ pub fn choose_repo_path() -> Result<Option<String>, String> {
     }
 }
 
-pub fn plan_repo_import(source: &str, destination: &str) -> Result<RepoImportPlan, String> {
+pub fn plan_repo_import(
+    source: &str,
+    destination: &str,
+    branch: Option<&str>,
+    shallow: bool,
+) -> Result<RepoImportPlan, String> {
     let source = source.trim();
     let destination = repo::resolve_user_path(destination)?;
     validate_import_inputs(source, &destination)?;
     let source_type = import_source_type(source);
+    let branch = normalized_branch(branch);
     let display_command = match source_type.as_str() {
         "zip-url" => format!(
             "curl -L --fail {} -o <temp>.zip; extract <temp>.zip -> {}",
@@ -178,25 +187,39 @@ pub fn plan_repo_import(source: &str, destination: &str) -> Result<RepoImportPla
             shell_arg(source),
             shell_arg(&repo::display_path(&destination))
         ),
-        _ => format!(
-            "git clone {} {}",
-            shell_arg(source),
-            shell_arg(&repo::display_path(&destination))
-        ),
+        _ => {
+            let mut parts = vec!["git clone".to_string()];
+            if shallow {
+                parts.push("--depth 1".into());
+            }
+            if let Some(branch) = &branch {
+                parts.push(format!("--branch {}", shell_arg(branch)));
+            }
+            parts.push(shell_arg(source));
+            parts.push(shell_arg(&repo::display_path(&destination)));
+            parts.join(" ")
+        }
     };
 
     Ok(RepoImportPlan {
         source: source.into(),
         destination: repo::display_path(&destination),
         source_type,
+        branch,
+        shallow,
         display_command,
         affected_paths: vec![repo::display_path(&destination)],
         note: "Destination must not already exist. ZIP imports are extracted into a temporary folder, then normalized so the selected destination becomes the repo root.".into(),
     })
 }
 
-pub fn run_repo_import(source: &str, destination: &str) -> Result<RepoImportResult, String> {
-    let plan = plan_repo_import(source, destination)?;
+pub fn run_repo_import(
+    source: &str,
+    destination: &str,
+    branch: Option<&str>,
+    shallow: bool,
+) -> Result<RepoImportResult, String> {
+    let plan = plan_repo_import(source, destination, branch, shallow)?;
     let destination = PathBuf::from(&plan.destination);
     let parent = destination
         .parent()
@@ -206,7 +229,10 @@ pub fn run_repo_import(source: &str, destination: &str) -> Result<RepoImportResu
     match plan.source_type.as_str() {
         "git" => run_git_import(&plan, &destination),
         "zip-url" | "zip-file" => run_zip_import(&plan, &destination),
-        _ => Err(format!("Unsupported import source type: {}", plan.source_type)),
+        _ => Err(format!(
+            "Unsupported import source type: {}",
+            plan.source_type
+        )),
     }
 }
 
@@ -250,7 +276,10 @@ fn validate_import_inputs(source: &str, destination: &Path) -> Result<(), String
     if import_source_type(source) == "zip-file" {
         let source_path = repo::resolve_user_path(source)?;
         if !source_path.exists() {
-            return Err(format!("ZIP file does not exist: {}", repo::display_path(source_path)));
+            return Err(format!(
+                "ZIP file does not exist: {}",
+                repo::display_path(source_path)
+            ));
         }
     }
     Ok(())
@@ -269,9 +298,24 @@ fn import_source_type(source: &str) -> String {
     }
 }
 
+fn normalized_branch(branch: Option<&str>) -> Option<String> {
+    branch
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
 fn run_git_import(plan: &RepoImportPlan, destination: &Path) -> Result<RepoImportResult, String> {
-    let output = Command::new("git")
-        .args(["clone", &plan.source, &plan.destination])
+    let mut command = Command::new("git");
+    command.arg("clone");
+    if plan.shallow {
+        command.args(["--depth", "1"]);
+    }
+    if let Some(branch) = &plan.branch {
+        command.args(["--branch", branch]);
+    }
+    let output = command
+        .args([&plan.source, &plan.destination])
         .output()
         .map_err(|error| error.to_string())?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -290,7 +334,11 @@ fn run_git_import(plan: &RepoImportPlan, destination: &Path) -> Result<RepoImpor
 }
 
 fn run_zip_import(plan: &RepoImportPlan, destination: &Path) -> Result<RepoImportResult, String> {
-    let temp_root = std::env::temp_dir().join(format!("agents-manager-import-{}-{}", std::process::id(), timestamp()));
+    let temp_root = std::env::temp_dir().join(format!(
+        "agents-manager-import-{}-{}",
+        std::process::id(),
+        timestamp()
+    ));
     let extract_dir = temp_root.join("extract");
     fs::create_dir_all(&extract_dir).map_err(|error| error.to_string())?;
     let zip_path = if plan.source_type == "zip-url" {
@@ -309,7 +357,10 @@ fn run_zip_import(plan: &RepoImportPlan, destination: &Path) -> Result<RepoImpor
             destination: plan.destination.clone(),
             repo_path: None,
             stdout: extract_output.0,
-            stderr: format!("{}\nZIP extracted, but no portable agents repo layout was found.", extract_output.1),
+            stderr: format!(
+                "{}\nZIP extracted, but no portable agents repo layout was found.",
+                extract_output.1
+            ),
         });
     };
 
@@ -340,7 +391,13 @@ fn download_zip(source: &str, destination: &Path) -> Result<(), String> {
             .output()
     } else {
         Command::new("curl")
-            .args(["-L", "--fail", source, "-o", &repo::display_path(destination)])
+            .args([
+                "-L",
+                "--fail",
+                source,
+                "-o",
+                &repo::display_path(destination),
+            ])
             .output()
     }
     .map_err(|error| error.to_string())?;
@@ -367,11 +424,21 @@ fn extract_zip(zip_path: &Path, destination: &Path) -> Result<(String, String), 
             .output()
     } else if cfg!(target_os = "macos") && command_exists("ditto") {
         Command::new("ditto")
-            .args(["-x", "-k", &repo::display_path(zip_path), &repo::display_path(destination)])
+            .args([
+                "-x",
+                "-k",
+                &repo::display_path(zip_path),
+                &repo::display_path(destination),
+            ])
             .output()
     } else {
         Command::new("unzip")
-            .args(["-q", &repo::display_path(zip_path), "-d", &repo::display_path(destination)])
+            .args([
+                "-q",
+                &repo::display_path(zip_path),
+                "-d",
+                &repo::display_path(destination),
+            ])
             .output()
     }
     .map_err(|error| error.to_string())?;
@@ -457,7 +524,12 @@ fn resolve_command(plan: &ScriptPlan) -> Result<Command, String> {
         }
         if script_name.ends_with(".ps1") {
             let mut command = Command::new("powershell.exe");
-            command.args(["-ExecutionPolicy", "Bypass", "-File", &bundled::display_path(script_path)]);
+            command.args([
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                &bundled::display_path(script_path),
+            ]);
             command.args(&plan.args);
             return Ok(command);
         }
@@ -499,13 +571,19 @@ fn affected_shared(repo: &AgentsRepo) -> Vec<String> {
         path_join(&repo.home, &[".claude"]),
         repo.codex_home.clone(),
         path_join(&repo.home, &[".config", "opencode"]),
-        path_join(&repo.home, &[".config", "agents", "github-copilot-cli.env.sh"]),
+        path_join(
+            &repo.home,
+            &[".config", "agents", "github-copilot-cli.env.sh"],
+        ),
     ]
 }
 
 fn append_paths(mut paths: Vec<String>, repo: &AgentsRepo) -> Vec<String> {
     paths.push(path_join(&repo.codex_home, &["config.toml"]));
-    paths.push(path_join(&repo.home, &[".config", "opencode", "opencode.json"]));
+    paths.push(path_join(
+        &repo.home,
+        &[".config", "opencode", "opencode.json"],
+    ));
     paths
 }
 
@@ -571,7 +649,9 @@ fn choose_repo_path_macos() -> Result<Option<String>, String> {
         return Err(stderr.trim().to_string());
     }
 
-    Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()))
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
 }
 
 fn choose_repo_path_windows() -> Result<Option<String>, String> {
@@ -603,7 +683,14 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 
 fn choose_repo_path_linux() -> Result<Option<String>, String> {
     let candidates = [
-        ("zenity", vec!["--file-selection", "--directory", "--title=Choose portable agents repo"]),
+        (
+            "zenity",
+            vec![
+                "--file-selection",
+                "--directory",
+                "--title=Choose portable agents repo",
+            ],
+        ),
         ("kdialog", vec!["--getexistingdirectory", "."]),
     ];
 
@@ -616,7 +703,10 @@ fn choose_repo_path_linux() -> Result<Option<String>, String> {
         if !available {
             continue;
         }
-        let output = Command::new(command).args(args).output().map_err(|error| error.to_string())?;
+        let output = Command::new(command)
+            .args(args)
+            .output()
+            .map_err(|error| error.to_string())?;
         if output.status.success() {
             let selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
             return Ok((!selected.is_empty()).then_some(selected));
@@ -624,5 +714,8 @@ fn choose_repo_path_linux() -> Result<Option<String>, String> {
         return Ok(None);
     }
 
-    Err("No folder picker found. Install zenity or kdialog, or use AGENTS_REPO for repo override.".into())
+    Err(
+        "No folder picker found. Install zenity or kdialog, or use AGENTS_REPO for repo override."
+            .into(),
+    )
 }
