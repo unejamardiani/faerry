@@ -335,7 +335,7 @@ fn run_git_import(plan: &RepoImportPlan, destination: &Path) -> Result<RepoImpor
 
 fn run_zip_import(plan: &RepoImportPlan, destination: &Path) -> Result<RepoImportResult, String> {
     let temp_root = std::env::temp_dir().join(format!(
-        "agents-manager-import-{}-{}",
+        "faerry-import-{}-{}",
         std::process::id(),
         timestamp()
     ));

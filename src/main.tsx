@@ -345,7 +345,7 @@ const actions = [
   ["syncAll", "Sync All"],
 ] as const;
 
-const repoPathStorageKey = "agents-manager.repoPath";
+const repoPathStorageKey = "faerry.repoPath";
 
 function App() {
   const [state, setState] = useState<AppState | null>(null);
@@ -603,10 +603,10 @@ function App() {
     <div className="appShell">
       <header className="appHeader">
         <div className="brand">
-          <div className="brandMark">A</div>
+          <div className="brandMark">F</div>
           <div>
-            <h1>Agents Manager</h1>
-            <p>Keep agent configs synced</p>
+            <h1>Faerry</h1>
+            <p>Carry your agent setup across tools</p>
           </div>
         </div>
         <nav className="nav">
@@ -1128,7 +1128,7 @@ function AdvancedView({
       <AdvancedSection title="Editor" subtitle="Create and modify repo resources.">
         <Editor state={state} repoPath={effectiveRepoPath} onRefresh={onRefresh} />
       </AdvancedSection>
-      <AdvancedSection title="Packaging" subtitle="Build distributable Claude skill and extension packages.">
+      <AdvancedSection title="Packaging" subtitle="Build distributable Claude skill packages.">
         <Packaging repoPath={effectiveRepoPath} />
       </AdvancedSection>
       <AdvancedSection title="Diff previews" subtitle="Inspect expected changes without syncing." onOpen={() => !diffPreview && onPreview()}>
@@ -2208,7 +2208,7 @@ function About({
         </div>
       )}
 
-      <Panel title="Updates" subtitle="Check for newer versions of the Agents Manager application.">
+      <Panel title="Updates" subtitle="Check for newer versions of Faerry.">
         <div className="buttonRow padded compact">
           <button className="primaryButton" onClick={onCheckUpdates} disabled={checkingUpdate}>
             {checkingUpdate ? "Checking..." : "Check for Updates"}
@@ -2715,7 +2715,7 @@ function Packaging({ repoPath }: { repoPath: string }) {
   const [result, setResult] = useState<PackageResult | null>(null);
   const [running, setRunning] = useState<string | null>(null);
 
-  async function run(action: "package_claude_skills" | "package_claude_extension") {
+  async function run(action: "package_claude_skills") {
     setRunning(action);
     setResult(null);
     try {
@@ -2729,13 +2729,10 @@ function Packaging({ repoPath }: { repoPath: string }) {
   }
 
   return (
-    <Panel title="Packaging" subtitle="Build distributable packages for Claude Skills and Extensions.">
+    <Panel title="Packaging" subtitle="Build distributable packages for Claude Skills.">
       <div className="buttonRow padded compact">
         <button className="primaryButton" onClick={() => run("package_claude_skills")} disabled={!!running}>
           {running === "package_claude_skills" ? "Packaging..." : "Package Claude Skills"}
-        </button>
-        <button className="primaryButton" onClick={() => run("package_claude_extension")} disabled={!!running}>
-          {running === "package_claude_extension" ? "Packaging..." : "Package Claude Extension"}
         </button>
       </div>
       {result && (

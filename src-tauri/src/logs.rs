@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const LOGS_FILENAME: &str = "agent-manager-logs.json";
 
 fn logs_path() -> PathBuf {
-    let dir = std::env::temp_dir().join("portable-agents-manager");
+    let dir = std::env::temp_dir().join("faerry");
     dir.join(LOGS_FILENAME)
 }
 

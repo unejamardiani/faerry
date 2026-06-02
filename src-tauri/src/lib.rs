@@ -562,17 +562,6 @@ fn package_claude_skills(repo_path: Option<String>) -> Result<PackageResult, Str
     execute_package_script(&repo.root, script)
 }
 
-#[tauri::command]
-fn package_claude_extension(repo_path: Option<String>) -> Result<PackageResult, String> {
-    let repo = repo::detect_repo_with_override(repo_path).map_err(|e| e.to_string())?;
-    let script = if cfg!(windows) {
-        "package-claude-extension.ps1"
-    } else {
-        "package-claude-extension.sh"
-    };
-    execute_package_script(&repo.root, script)
-}
-
 fn execute_package_script(repo_path: &str, script_name: &str) -> Result<PackageResult, String> {
     let script_path = bundled::script_path(script_name)?;
     let mut cmd = if script_name.ends_with(".ps1") {
@@ -640,7 +629,7 @@ fn check_for_updates() -> Result<UpdateCheckResult, String> {
     Ok(UpdateCheckResult {
         current_version: current_version.clone(),
         latest_version: None,
-        update_url: Some("https://github.com/portable-agents/agents-manager/releases".into()),
+        update_url: Some("https://github.com/unejamardiani/faerry/releases".into()),
         up_to_date: true,
         note: format!("Update check requires a remote endpoint. Current: v{current_version}."),
     })
@@ -789,7 +778,6 @@ pub fn run() {
             save_profiles,
             // Feature 19: Packaging
             package_claude_skills,
-            package_claude_extension,
             // Feature 20: Update Check
             check_for_updates,
             // Feature 22: Safety Guardrails
@@ -798,7 +786,7 @@ pub fn run() {
             plan_selective_sync,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Agents Manager");
+        .expect("error while running Faerry");
 }
 
 #[cfg(test)]

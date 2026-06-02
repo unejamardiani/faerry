@@ -8,15 +8,15 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(scriptDir, "..");
 const tauriDir = path.join(appRoot, "src-tauri");
 const packageJson = JSON.parse(fs.readFileSync(path.join(appRoot, "package.json"), "utf8"));
-const appName = "Agents Manager";
-const binaryName = "agents-manager";
+const appName = "Faerry";
+const binaryName = "faerry";
 const args = new Set(process.argv.slice(2));
 const skipBuild = args.has("--no-build");
 
 const platform = process.platform;
 const arch = process.arch === "x64" ? "x64" : process.arch;
 const portableDir = path.join(tauriDir, "target", "release", "bundle", "portable");
-const stageRoot = path.join(os.tmpdir(), `agents-manager-portable-${process.pid}`);
+const stageRoot = path.join(os.tmpdir(), `faerry-portable-${process.pid}`);
 const stageDir = path.join(stageRoot, `${appName} Portable`);
 const outputZip = path.join(
   portableDir,
@@ -43,13 +43,13 @@ if (platform === "darwin") {
   const appBundle = path.join(tauriDir, "target", "release", "bundle", "macos", `${appName}.app`);
   assertExists(appBundle, "macOS app bundle");
   fs.cpSync(appBundle, path.join(stageDir, `${appName}.app`), { recursive: true });
-  writeReadme("Open Agents Manager.app directly. Drag it to Applications if you want, but no installer is required.");
+  writeReadme("Open Faerry.app directly. Drag it to Applications if you want, but no installer is required.");
   run("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", stageDir, outputZip], { cwd: stageRoot });
 } else {
   const exe = path.join(tauriDir, "target", "release", `${binaryName}.exe`);
   assertExists(exe, "Windows executable");
   fs.copyFileSync(exe, path.join(stageDir, `${appName}.exe`));
-  writeReadme("Run Agents Manager.exe directly. No installer is required.");
+  writeReadme("Run Faerry.exe directly. No installer is required.");
   run("powershell.exe", [
     "-NoProfile",
     "-ExecutionPolicy",

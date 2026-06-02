@@ -10,13 +10,10 @@ const SCRIPT_NAMES: &[&str] = &[
     "sync-mcps.mjs",
     "sync-source-skills.mjs",
     "package-claude-skills.sh",
-    "package-claude-extension.sh",
     "sync-claude-cowork-skills.mjs",
-    "sync-claude-desktop-extension.mjs",
     "link-agents.ps1",
     "sync-all-agents.ps1",
     "package-claude-skills.ps1",
-    "package-claude-extension.ps1",
 ];
 
 pub fn get_bundled_scripts() -> Vec<BundledScriptInfo> {

@@ -1,12 +1,12 @@
 [package]
-name = "agents-manager"
+name = "faerry"
 version = "0.1.0"
-description = "Portable Agents Manager"
-authors = ["Portable Agents"]
+description = "Faerry - Portable Agents Manager"
+authors = ["Faerry contributors"]
 edition = "2021"
 
 [lib]
-name = "agents_manager_lib"
+name = "faerry_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

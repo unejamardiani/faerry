@@ -14,7 +14,7 @@ const defaultAppRoots = [
   path.join(os.homedir(), "Library", "Application Support", "Claude"),
   path.join(os.homedir(), "Library", "Application Support", "Claude-3p"),
 ];
-const legacyManagedSkillIds = new Set(["obsidian-vault"]);
+const legacyManagedSkillIds = new Set();
 
 const args = process.argv.slice(2);
 const appRoots = [];

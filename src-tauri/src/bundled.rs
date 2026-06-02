@@ -13,69 +13,54 @@ struct BundledScript {
 const SCRIPTS: &[BundledScript] = &[
     BundledScript {
         name: "link-agents.sh",
-        content: include_str!("../../../../scripts/link-agents.sh"),
+        content: include_str!("../../scripts/link-agents.sh"),
         executable: true,
     },
     BundledScript {
         name: "sync-all-agents.sh",
-        content: include_str!("../../../../scripts/sync-all-agents.sh"),
+        content: include_str!("../../scripts/sync-all-agents.sh"),
         executable: true,
     },
     BundledScript {
         name: "sync-mcps.mjs",
-        content: include_str!("../../../../scripts/sync-mcps.mjs"),
+        content: include_str!("../../scripts/sync-mcps.mjs"),
         executable: true,
     },
     BundledScript {
         name: "sync-source-skills.mjs",
-        content: include_str!("../../../../scripts/sync-source-skills.mjs"),
+        content: include_str!("../../scripts/sync-source-skills.mjs"),
         executable: true,
     },
     BundledScript {
         name: "package-claude-skills.sh",
-        content: include_str!("../../../../scripts/package-claude-skills.sh"),
-        executable: true,
-    },
-    BundledScript {
-        name: "package-claude-extension.sh",
-        content: include_str!("../../../../scripts/package-claude-extension.sh"),
+        content: include_str!("../../scripts/package-claude-skills.sh"),
         executable: true,
     },
     BundledScript {
         name: "sync-claude-cowork-skills.mjs",
-        content: include_str!("../../../../scripts/sync-claude-cowork-skills.mjs"),
-        executable: true,
-    },
-    BundledScript {
-        name: "sync-claude-desktop-extension.mjs",
-        content: include_str!("../../../../scripts/sync-claude-desktop-extension.mjs"),
+        content: include_str!("../../scripts/sync-claude-cowork-skills.mjs"),
         executable: true,
     },
     BundledScript {
         name: "link-agents.ps1",
-        content: include_str!("../../../../scripts/link-agents.ps1"),
+        content: include_str!("../../scripts/link-agents.ps1"),
         executable: false,
     },
     BundledScript {
         name: "sync-all-agents.ps1",
-        content: include_str!("../../../../scripts/sync-all-agents.ps1"),
+        content: include_str!("../../scripts/sync-all-agents.ps1"),
         executable: false,
     },
     BundledScript {
         name: "package-claude-skills.ps1",
-        content: include_str!("../../../../scripts/package-claude-skills.ps1"),
-        executable: false,
-    },
-    BundledScript {
-        name: "package-claude-extension.ps1",
-        content: include_str!("../../../../scripts/package-claude-extension.ps1"),
+        content: include_str!("../../scripts/package-claude-skills.ps1"),
         executable: false,
     },
 ];
 
 pub fn materialize() -> Result<PathBuf, String> {
     let dir = std::env::temp_dir()
-        .join("portable-agents-manager")
+        .join("faerry")
         .join(format!("scripts-v{}", env!("CARGO_PKG_VERSION")));
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
 
@@ -120,17 +105,13 @@ fn patched_content(name: &str, content: &str) -> String {
                 "node \"$SCRIPT_DIR/sync-mcps.mjs\"",
                 "node \"$SCRIPT_DIR/sync-mcps.mjs\" --registry \"$REPO_ROOT/mcp/servers.json\"",
             ),
-        "package-claude-skills.sh" | "package-claude-extension.sh" => content.replace(
+        "package-claude-skills.sh" => content.replace(
             "REPO_ROOT=$(cd -- \"$SCRIPT_DIR/..\" && pwd)",
             "REPO_ROOT=\"${PORTABLE_AGENTS_REPO_ROOT:-$(cd -- \"$SCRIPT_DIR/..\" && pwd)}\"",
         ),
         "sync-claude-cowork-skills.mjs" => content.replace(
             "const repoRoot = path.resolve(scriptDir, \"..\");",
             "const repoRoot = process.env.PORTABLE_AGENTS_REPO_ROOT || path.resolve(scriptDir, \"..\");",
-        ),
-        "sync-claude-desktop-extension.mjs" => content.replace(
-            "const repoRoot = path.resolve(__dirname, \"..\");",
-            "const repoRoot = process.env.PORTABLE_AGENTS_REPO_ROOT || path.resolve(__dirname, \"..\");",
         ),
         _ => content.to_string(),
     }

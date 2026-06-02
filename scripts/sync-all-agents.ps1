@@ -7,8 +7,6 @@ param(
     [switch]$SkipCodex,
     [switch]$SkipCopilotEnv,
     [switch]$SkipClaudePackages,
-    [switch]$SkipClaudeExtension,
-    [switch]$WithClaudeExtension,
     [switch]$WithCoworkLive,
     [switch]$DryRunCowork,
     [switch]$WithMcps,
@@ -39,12 +37,6 @@ if (-not $SkipClaudePackages) {
     Write-Host ""
     Write-Host "Claude Desktop skill packages"
     & (Join-Path $ScriptDir "package-claude-skills.ps1")
-}
-
-if (-not $SkipClaudeExtension) {
-    Write-Host ""
-    Write-Host "Claude Desktop extension"
-    & (Join-Path $ScriptDir "package-claude-extension.ps1")
 }
 
 if ($WithCoworkLive -or $DryRunCowork) {

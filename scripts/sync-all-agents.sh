@@ -6,7 +6,6 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 
 WITH_CLAUDE_PACKAGES=1
-WITH_CLAUDE_EXTENSION=1
 WITH_COWORK_LIVE=0
 DRY_RUN_COWORK=0
 WITH_MCPS=0
@@ -24,7 +23,6 @@ Default behavior:
   1. Link ~/.agents to this repository.
   2. Link Claude Code, OpenCode, Codex, and Copilot CLI to ~/.agents.
   3. Build Claude Desktop skill ZIPs from repo skills.
-  4. Build the Claude Desktop MCPB extension.
 
 Claude Desktop / Cowork / Claude 3P live app data is not modified by default.
 Use --with-cowork-live when you explicitly want to copy repo skills into
@@ -39,8 +37,6 @@ Options:
   --skip-codex                Pass through to link-agents.sh.
   --skip-copilot-env          Pass through to link-agents.sh.
   --skip-claude-packages      Do not build Claude Desktop skill ZIPs.
-  --skip-claude-extension     Do not build the Claude Desktop MCPB extension.
-  --with-claude-extension     Deprecated no-op; the extension is built by default.
   --with-cowork-live          Copy repo skills into Claude/Cowork/Claude-3P live workspaces.
   --dry-run-cowork            Show Cowork live sync targets without copying.
   --with-mcps                 Sync repo-managed MCP servers into Claude Code, Codex, and OpenCode.
@@ -66,14 +62,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-claude-packages)
       WITH_CLAUDE_PACKAGES=0
-      shift
-      ;;
-    --skip-claude-extension)
-      WITH_CLAUDE_EXTENSION=0
-      shift
-      ;;
-    --with-claude-extension)
-      WITH_CLAUDE_EXTENSION=1
       shift
       ;;
     --with-cowork-live)
@@ -121,12 +109,6 @@ if [[ "$WITH_CLAUDE_PACKAGES" -eq 1 ]]; then
   echo ""
   echo "Claude Desktop skill packages"
   "$SCRIPT_DIR/package-claude-skills.sh"
-fi
-
-if [[ "$WITH_CLAUDE_EXTENSION" -eq 1 ]]; then
-  echo ""
-  echo "Claude Desktop extension"
-  "$SCRIPT_DIR/package-claude-extension.sh"
 fi
 
 if [[ "$WITH_COWORK_LIVE" -eq 1 ]]; then

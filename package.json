@@ -1,9 +1,8 @@
 {
-  "name": "agents-manager",
+  "name": "faerry",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "Tauri desktop GUI for managing a portable .agents repository.",
+  "description": "Faerry carries portable agent configuration across tools.",
   "scripts": {
     "dev": "tauri dev",
     "dev:vite": "vite --host 127.0.0.1 --port 1420",

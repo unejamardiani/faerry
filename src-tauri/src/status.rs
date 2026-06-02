@@ -2030,7 +2030,7 @@ mod tests {
 
     #[test]
     fn build_state_merges_configured_source_skills_and_commands() {
-        let root = temp_path("agents-manager-source-test");
+        let root = temp_path("faerry-source-test");
         let repo_root = root.join("repo");
         let source_root = root.join("source");
 
@@ -2112,7 +2112,7 @@ mod tests {
 
     #[test]
     fn read_skills_marks_source_skill_installed_when_runtime_aggregate_contains_it() {
-        let root = temp_path("agents-manager-source-install-test");
+        let root = temp_path("faerry-source-install-test");
         let repo_root = root.join("repo");
         let source_root = root.join("source");
         let aggregate_root = repo_root.join(".agents-manager/runtime/skills");
@@ -2190,7 +2190,7 @@ mod tests {
 
     #[test]
     fn tool_status_ignores_unsupported_command_folder() {
-        let root = temp_path("agents-manager-tool-status-test");
+        let root = temp_path("faerry-tool-status-test");
         let repo_root = root.join("repo");
         let home = root.join("home");
         let agents_home = home.join(".agents");
@@ -2243,7 +2243,7 @@ mod tests {
             return;
         }
 
-        let root = temp_path("agents-manager-git-source-test");
+        let root = temp_path("faerry-git-source-test");
         let repo_root = root.join("repo");
         let git_root = root.join("git-source");
 
@@ -2312,7 +2312,7 @@ mod tests {
 
     #[test]
     fn include_skill_patterns_filter_source_folder_children() {
-        let root = temp_path("agents-manager-include-pattern-test");
+        let root = temp_path("faerry-include-pattern-test");
         let repo_root = root.join("repo");
         let source_root = root.join("source");
 
@@ -2375,7 +2375,7 @@ mod tests {
 
     #[test]
     fn build_state_loads_designs_from_configured_source() {
-        let root = temp_path("agents-manager-design-source-test");
+        let root = temp_path("faerry-design-source-test");
         let repo_root = root.join("repo");
         let source_root = root.join("source");
 
