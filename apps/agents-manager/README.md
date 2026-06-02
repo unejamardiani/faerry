@@ -35,6 +35,18 @@ Build the packaged app with:
 npm run build
 ```
 
+Build a portable zip for the current platform with:
+
+```bash
+npm run package:portable
+```
+
+On macOS this creates a zipped `.app`. On Windows this creates a zipped `.exe`.
+The output is written under `src-tauri/target/release/bundle/portable/`.
+Portable packages do not install prerequisites: Windows machines still need
+Microsoft Edge WebView2 Runtime, and sync features still need the relevant CLIs
+available on `PATH`.
+
 ## UI Simplification Progress
 
 The current app redesign keeps the original backend commands and resource model, but simplifies the surface UI around four top-level areas:

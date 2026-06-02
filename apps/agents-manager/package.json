@@ -9,6 +9,7 @@
     "dev:vite": "vite --host 127.0.0.1 --port 1420",
     "build": "tauri build",
     "build:frontend": "tsc && vite build",
+    "package:portable": "node scripts/package-portable.mjs",
     "tauri": "tauri",
     "check": "tsc --noEmit && cargo check --manifest-path src-tauri/Cargo.toml"
   },
