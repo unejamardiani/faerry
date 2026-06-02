@@ -119,11 +119,6 @@ fn link_preview_sections(repo: &AgentsRepo) -> Vec<DiffSection> {
             skills_path,
         ));
         sections.push(symlink_section(
-            "Shared commands",
-            path_join(&repo.agents_home, &["commands"]),
-            repo.paths.commands.clone(),
-        ));
-        sections.push(symlink_section(
             "Shared templates",
             path_join(&repo.agents_home, &["templates"]),
             path_join(&repo.root, &["templates"]),
@@ -141,12 +136,6 @@ fn link_preview_sections(repo: &AgentsRepo) -> Vec<DiffSection> {
         path_join(&repo.agents_home, &["skills"]),
     ));
     sections.push(symlink_section(
-        "Claude Code commands",
-        path_join(&repo.home, &[".claude", "commands"]),
-        path_join(&repo.agents_home, &["commands"]),
-    ));
-
-    sections.push(symlink_section(
         "Codex global instructions",
         path_join(&repo.codex_home, &["AGENTS.md"]),
         path_join(&repo.agents_home, &["AGENTS.md"]),
@@ -157,12 +146,6 @@ fn link_preview_sections(repo: &AgentsRepo) -> Vec<DiffSection> {
         path_join(&repo.agents_home, &["skills"]),
     ));
     sections.push(symlink_section(
-        "Codex prompts",
-        path_join(&repo.codex_home, &["prompts"]),
-        path_join(&repo.agents_home, &["commands"]),
-    ));
-
-    sections.push(symlink_section(
         "OpenCode global instructions",
         path_join(&repo.home, &[".config", "opencode", "AGENTS.md"]),
         path_join(&repo.agents_home, &["AGENTS.md"]),
@@ -172,12 +155,6 @@ fn link_preview_sections(repo: &AgentsRepo) -> Vec<DiffSection> {
         path_join(&repo.home, &[".config", "opencode", "skills"]),
         path_join(&repo.agents_home, &["skills"]),
     ));
-    sections.push(symlink_section(
-        "OpenCode commands",
-        path_join(&repo.home, &[".config", "opencode", "commands"]),
-        path_join(&repo.agents_home, &["commands"]),
-    ));
-
     let copilot_path = path_join(
         &repo.home,
         &[".config", "agents", "github-copilot-cli.env.sh"],

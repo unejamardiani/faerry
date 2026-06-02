@@ -48,7 +48,7 @@ pub fn plan_action(repo: &AgentsRepo, action: &str) -> Result<ScriptPlan, String
             vec!["--repo-root", &repo.root],
             shared,
             true,
-            "Links global instructions, skills, commands, and the GitHub Copilot CLI env snippet.",
+            "Links global instructions, skills, and the GitHub Copilot CLI env snippet.",
         ),
         "dryRunAll" => raw_plan(
             action,

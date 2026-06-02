@@ -35,6 +35,38 @@ Build the packaged app with:
 npm run build
 ```
 
+## UI Simplification Progress
+
+The current app redesign keeps the original backend commands and resource model, but simplifies the surface UI around four top-level areas:
+
+- **Sync** is the default screen. It shows one global status, target summaries, a primary **Sync all** action, **Preview changes**, and a collapsed **More sync options** area for narrower sync commands.
+- **Sources** owns repository selection and `sources.json` inspection. It shows the selected repo/folder, source config status, enabled resources per source, warnings/errors, and repo/source config actions.
+- **Resources** contains skills, commands, MCP servers, and designs with counts, search, list views, and detail drawers for raw paths, JSON/frontmatter, previews, and install state.
+- **Advanced** contains low-frequency tooling as collapsed sections: editor, packaging, diff previews, tool paths, validation, logs, backups, profiles, runtime/about, scripts, and updates.
+
+Status behavior is intentionally simple on the surface:
+
+- `In sync` means supported managed targets match the selected repository.
+- `Not in sync` means a supported managed target is missing, drifted, unmanaged, source-only, or otherwise available but not installed.
+- `Needs attention` is reserved for actionable errors such as invalid source config, invalid MCP registry, missing required CLI, failed sync output, or auth that explicitly needs login.
+- Best-effort diagnostics that cannot be checked automatically are shown as `diagnostic` and do not by themselves make the global sync status fail.
+
+Commands remain inspectable resources, but the current sync scripts do not install command folders into Claude Code, Codex, or OpenCode. Tool sync rollups therefore ignore command folders and show them as `not-supported` instead of marking the whole tool as drifted.
+
+Preview behavior:
+
+- **Preview changes** always renders a result.
+- Changed or attention-worthy sections are shown first.
+- A clean preview shows an explicit “No changes found” empty state and keeps unchanged checks available behind inspection.
+
+Performance and interaction fixes completed in this pass:
+
+- Background refresh is silent, does not overlap, only polls on the Sync tab, and pauses while sync is running.
+- Expensive Tauri state, sync, and preview commands run on blocking worker threads.
+- MCP auth checks are cached briefly to avoid repeated CLI calls during refresh.
+- Advanced sections and preview sections are controlled button-based accordions so they can open and collapse reliably.
+- Last-run terminal output has a **Copy log** action for sync debugging.
+
 ## Apply Model
 
 Before running any action, the GUI shows:
@@ -59,7 +91,7 @@ The selected source-of-truth repo no longer needs to contain a `scripts/` folder
 
 Diff preview currently covers:
 
-- symlink targets for global instructions, skills, commands, and shared `.agents` links
+- symlink targets for global instructions, skills, and shared `.agents` links
 - GitHub Copilot CLI env snippet
 - Codex MCP config text
 - OpenCode MCP config JSON
@@ -163,4 +195,4 @@ MCP auth status is best-effort. Where CLIs do not expose a stable status command
 
 ## Selective Sync
 
-Selective sync planning is available in the **Editor** view. MCP sync can be planned per supported target tool. Link sync is still limited by the bundled scripts and currently runs the whole link script when globals, skills, or commands are selected.
+Selective sync planning is available in the **Editor** view. MCP sync can be planned per supported target tool. Link sync is still limited by the bundled scripts and currently runs the whole link script when globals or skills are selected.

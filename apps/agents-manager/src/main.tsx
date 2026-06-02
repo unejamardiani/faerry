@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import "./styles.css";
@@ -313,8 +313,29 @@ type SelectiveSyncPlan = {
   warnings: string[];
 };
 
-const views = ["Dashboard", "Skills", "Commands", "Designs", "MCP Servers", "Tools", "Diffs", "Backups", "About", "Validation", "Editor", "Logs", "Profiles"] as const;
+const views = ["Sync", "Sources", "Resources", "Advanced"] as const;
 type View = (typeof views)[number];
+
+type ResourceTab = "skills" | "commands" | "mcps" | "designs";
+
+type ResourceSelection =
+  | { kind: "skills"; item: SkillItem }
+  | { kind: "commands"; item: CommandItem }
+  | { kind: "mcps"; item: McpServer }
+  | { kind: "designs"; item: DesignItem };
+
+type SyncSummary = {
+  state: "checking" | "inSync" | "notInSync" | "needsAttention";
+  label: string;
+  description: string;
+  tone: "ok" | "warn" | "danger" | "checking";
+  items: Array<{ label: string; status: string; message?: string }>;
+  counts: {
+    synced: number;
+    outOfSync: number;
+    attention: number;
+  };
+};
 
 const actions = [
   ["dryRunMcps", "Dry Run MCPs"],
@@ -328,13 +349,14 @@ const repoPathStorageKey = "agents-manager.repoPath";
 
 function App() {
   const [state, setState] = useState<AppState | null>(null);
-  const [view, setView] = useState<View>("Dashboard");
+  const [view, setView] = useState<View>("Sync");
   const [plan, setPlan] = useState<ScriptPlan | null>(null);
   const [preview, setPreview] = useState<DiffPreview | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [output, setOutput] = useState("No command has run yet.");
   const [meta, setMeta] = useState("Ready.");
   const [loading, setLoading] = useState(false);
+  const [runningAction, setRunningAction] = useState<string | null>(null);
   const [repoPath, setRepoPath] = useState(() => localStorage.getItem(repoPathStorageKey) ?? "");
   const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo | null>(null);
   const [scriptVersions, setScriptVersions] = useState<ScriptVersionInfo[]>([]);
@@ -346,17 +368,16 @@ function App() {
   const [validating, setValidating] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [selectedSkill, setSelectedSkill] = useState<SkillItem | null>(null);
-  const [selectedCommand, setSelectedCommand] = useState<CommandItem | null>(null);
-  const [selectedDesign, setSelectedDesign] = useState<DesignItem | null>(null);
-  const [selectedMcp, setSelectedMcp] = useState<McpServer | null>(null);
   const [structuredOutput, setStructuredOutput] = useState<StructuredOutput | null>(null);
   const [diffPreview, setDiffPreview] = useState<DiffPreview | null>(null);
   const [diffChangedOnly, setDiffChangedOnly] = useState(true);
   const [lastRefreshed, setLastRefreshed] = useState("");
+  const refreshingRef = useRef(false);
 
-  async function refresh(pathOverride = repoPath) {
-    setLoading(true);
+  async function refresh(pathOverride = repoPath, options: { force?: boolean; silent?: boolean } = {}) {
+    if (refreshingRef.current && !options.force) return;
+    refreshingRef.current = true;
+    if (!options.silent) setLoading(true);
     try {
       setState(await invoke<AppState>("get_state", { repoPath: pathOverride || null }));
       setLastRefreshed(new Date().toLocaleString());
@@ -364,7 +385,8 @@ function App() {
       setOutput(String(error));
       setMeta("Failed to load state.");
     } finally {
-      setLoading(false);
+      if (!options.silent) setLoading(false);
+      refreshingRef.current = false;
     }
   }
 
@@ -422,16 +444,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => refresh(), 8000);
+    if (runningAction || view !== "Sync") return;
+    const timer = window.setInterval(() => refresh(repoPath, { silent: true }), 8000);
     return () => window.clearInterval(timer);
-  }, [repoPath]);
-
-  useEffect(() => {
-    if (view === "About") loadAboutInfo();
-    if (view === "Logs" || view === "Backups") loadLogs();
-    if (view === "Profiles") loadProfiles();
-    if (view === "Diffs" && !diffPreview) loadDiffPreview();
-  }, [view]);
+  }, [repoPath, runningAction, view]);
 
   async function reviewAction(action: string) {
     try {
@@ -450,6 +466,7 @@ function App() {
   }
 
   async function runAction(action: string) {
+    setRunningAction(action);
     setPlan(null);
     setPreview(null);
     setStructuredOutput(null);
@@ -480,10 +497,12 @@ function App() {
       } catch {}
       setMeta(`${action} exited with ${result.exitCode ?? "unknown"}`);
       setOutput(formatResult(result));
-      await refresh();
+      await refresh(repoPath, { force: true });
     } catch (error) {
       setMeta("Command failed before start.");
       setOutput(String(error));
+    } finally {
+      setRunningAction(null);
     }
   }
 
@@ -493,7 +512,7 @@ function App() {
       if (!selected) return;
       localStorage.setItem(repoPathStorageKey, selected);
       setRepoPath(selected);
-      await refresh(selected);
+      await refresh(selected, { force: true });
       setMeta("Repo override updated.");
     } catch (error) {
       setMeta("Repo selection failed.");
@@ -504,7 +523,7 @@ function App() {
   async function resetRepo() {
     localStorage.removeItem(repoPathStorageKey);
     setRepoPath("");
-    await refresh("");
+    await refresh("", { force: true });
     setMeta("Using automatic repo detection.");
   }
 
@@ -519,7 +538,7 @@ function App() {
       if (result.ok && result.repoPath) {
         localStorage.setItem(repoPathStorageKey, result.repoPath);
         setRepoPath(result.repoPath);
-        await refresh(result.repoPath);
+        await refresh(result.repoPath, { force: true });
       }
     } catch (error) {
       setMeta("Repo import failed.");
@@ -578,15 +597,16 @@ function App() {
 
   const toolById = useMemo(() => Object.fromEntries((state?.tools ?? []).map((tool: ToolStatus) => [tool.id, tool])), [state]);
   const effectiveRepoPath = state?.repo?.root ?? repoPath;
+  const syncSummary = useMemo(() => deriveSyncSummary(state, loading, structuredOutput, runningAction), [state, loading, structuredOutput, runningAction]);
 
   return (
     <div className="appShell">
-      <aside className="sidebar">
+      <header className="appHeader">
         <div className="brand">
           <div className="brandMark">A</div>
           <div>
             <h1>Agents Manager</h1>
-            <p>Portable repo control</p>
+            <p>Keep agent configs synced</p>
           </div>
         </div>
         <nav className="nav">
@@ -596,67 +616,87 @@ function App() {
             </button>
           ))}
         </nav>
-      </aside>
+      </header>
 
       <main className="content">
-        <header className="topbar">
-          <div>
-            <div className="eyebrow">Source of truth {repoPath ? "(selected)" : "(auto-detected)"}</div>
-            <div className="repoPath">{state?.repo?.root ?? state?.repoError ?? "Loading..."}</div>
-          </div>
-          <div className="buttonRow">
-            <button className="ghostButton" onClick={chooseRepo}>
-              Choose Repo
-            </button>
-            <button className="ghostButton" onClick={() => setImportOpen(true)}>
-              Clone / Import
-            </button>
-            {repoPath && (
-              <button className="ghostButton" onClick={resetRepo}>
-                Reset Auto
-              </button>
-            )}
-            <button className="ghostButton" onClick={() => refresh()} disabled={loading}>
-              Refresh
-            </button>
-            <button className="ghostButton" onClick={() => state?.repo && openPath(state.repo.root)}>
-              Open Repo
-            </button>
-          </div>
-        </header>
-
         {!state?.repo ? (
-          <Panel title="Repo Not Found" subtitle={state?.repoError ?? "Loading repository state."} />
+          <RepoSetup
+            error={state?.repoError}
+            loading={loading}
+            onChooseRepo={chooseRepo}
+            onImport={() => setImportOpen(true)}
+            onRefresh={() => refresh()}
+          />
         ) : (
           <>
-            {view === "Dashboard" && <Dashboard state={state} toolById={toolById} onAction={reviewAction} />}
-            {view === "Skills" && <Skills state={state} selected={selectedSkill} onSelect={setSelectedSkill} openPath={openPath} copyText={copyText} />}
-            {view === "Commands" && <Commands state={state} selected={selectedCommand} onSelect={setSelectedCommand} openPath={openPath} copyText={copyText} />}
-            {view === "Designs" && <Designs state={state} selected={selectedDesign} onSelect={setSelectedDesign} openPath={openPath} copyText={copyText} />}
-            {view === "MCP Servers" && <Mcps state={state} selected={selectedMcp} onSelect={setSelectedMcp} onAction={reviewAction} openPath={openPath} copyText={copyText} />}
-            {view === "Tools" && <Tools state={state} onAction={reviewAction} openPath={openPath} />}
-            {view === "Diffs" && <Diffs preview={diffPreview} changedOnly={diffChangedOnly} onChangedOnly={setDiffChangedOnly} onPreview={loadDiffPreview} openPath={openPath} copyText={copyText} />}
-            {view === "Backups" && <Backups logs={logs} onRefresh={loadLogs} openPath={openPath} copyText={copyText} />}
-            {view === "About" && <About runtimeInfo={runtimeInfo} scriptVersions={scriptVersions} agentsMdInfo={agentsMdInfo} sourceConfig={state.sourceConfig} safetyWarnings={safetyWarnings} updateResult={updateResult} checkingUpdate={checkingUpdate} onCheckUpdates={checkForUpdates} onOpenAgentsMd={openAgentsMd} copyText={copyText} />}
-            {view === "Validation" && <Validation onValidate={validateRepo} repoValidation={repoValidation} validating={validating} />}
-            {view === "Logs" && <Logs logs={logs} onClear={clearLogs} onRefresh={loadLogs} />}
-            {view === "Profiles" && <Profiles profiles={profiles} />}
-            {view === "Editor" && <Editor state={state} repoPath={effectiveRepoPath} onRefresh={refresh} />}
+            {view === "Sync" && (
+              <SyncHome
+                state={state}
+                summary={syncSummary}
+                toolById={toolById}
+                loading={loading}
+                runningAction={runningAction}
+                meta={meta}
+                output={output}
+                structuredOutput={structuredOutput}
+                diffPreview={diffPreview}
+                lastRefreshed={lastRefreshed}
+                onAction={reviewAction}
+                onPreview={() => loadDiffPreview("syncAll")}
+                onClearOutput={() => {
+                  setOutput("");
+                  setStructuredOutput(null);
+                }}
+                copyText={copyText}
+              />
+            )}
+            {view === "Sources" && (
+              <SourcesView
+                state={state}
+                repoPath={repoPath}
+                loading={loading}
+                onChooseRepo={chooseRepo}
+                onResetRepo={resetRepo}
+                onImport={() => setImportOpen(true)}
+                onRefresh={() => refresh()}
+                openPath={openPath}
+                copyText={copyText}
+              />
+            )}
+            {view === "Resources" && <ResourcesView state={state} onAction={reviewAction} openPath={openPath} copyText={copyText} />}
+            {view === "Advanced" && (
+              <AdvancedView
+                state={state}
+                effectiveRepoPath={effectiveRepoPath}
+                diffPreview={diffPreview}
+                diffChangedOnly={diffChangedOnly}
+                logs={logs}
+                profiles={profiles}
+                runtimeInfo={runtimeInfo}
+                scriptVersions={scriptVersions}
+                agentsMdInfo={agentsMdInfo}
+                safetyWarnings={safetyWarnings}
+                updateResult={updateResult}
+                checkingUpdate={checkingUpdate}
+                repoValidation={repoValidation}
+                validating={validating}
+                onAction={reviewAction}
+                onPreview={loadDiffPreview}
+                onChangedOnly={setDiffChangedOnly}
+                onRefreshLogs={loadLogs}
+                onRefreshProfiles={loadProfiles}
+                onClearLogs={clearLogs}
+                onValidate={validateRepo}
+                onLoadAboutInfo={loadAboutInfo}
+                onCheckUpdates={checkForUpdates}
+                onOpenAgentsMd={openAgentsMd}
+                onRefresh={refresh}
+                openPath={openPath}
+                copyText={copyText}
+              />
+            )}
           </>
         )}
-
-        <section className="terminalPanel">
-          <div className="panelHeader">
-            <div>
-              <h2>Command Output</h2>
-              <p>{meta}{lastRefreshed ? ` Last refreshed: ${lastRefreshed}` : ""}</p>
-            </div>
-            <button className="ghostButton" onClick={() => setOutput("")}>
-              Clear
-            </button>
-          </div>
-          {structuredOutput ? <StructuredOutputView output={structuredOutput} /> : <pre>{output}</pre>}
-        </section>
       </main>
 
       {plan && (
@@ -678,6 +718,798 @@ function App() {
         />
       )}
     </div>
+  );
+}
+
+function RepoSetup({
+  error,
+  loading,
+  onChooseRepo,
+  onImport,
+  onRefresh,
+}: {
+  error?: string;
+  loading: boolean;
+  onChooseRepo: () => void;
+  onImport: () => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <section className="emptyState">
+      <div className="statusDot danger" />
+      <div>
+        <h2>No agents repository selected</h2>
+        <p>{error ?? "Choose or import a portable agents repo to start syncing."}</p>
+      </div>
+      <div className="buttonRow">
+        <button className="primaryButton" onClick={onChooseRepo}>Choose folder</button>
+        <button className="ghostButton" onClick={onImport}>Clone or import</button>
+        <button className="ghostButton" onClick={onRefresh} disabled={loading}>{loading ? "Checking..." : "Refresh"}</button>
+      </div>
+    </section>
+  );
+}
+
+function SyncHome({
+  state,
+  summary,
+  toolById,
+  loading,
+  runningAction,
+  meta,
+  output,
+  structuredOutput,
+  diffPreview,
+  lastRefreshed,
+  onAction,
+  onPreview,
+  onClearOutput,
+  copyText,
+}: {
+  state: AppState;
+  summary: SyncSummary;
+  toolById: Record<string, ToolStatus>;
+  loading: boolean;
+  runningAction: string | null;
+  meta: string;
+  output: string;
+  structuredOutput: StructuredOutput | null;
+  diffPreview: DiffPreview | null;
+  lastRefreshed: string;
+  onAction: (action: string) => void;
+  onPreview: () => void;
+  onClearOutput: () => void;
+  copyText: (text: string) => void;
+}) {
+  const changedSections = changedPreviewSections(diffPreview);
+  const unchangedSections = (diffPreview?.sections ?? []).filter((section) => section.status === "unchanged" || section.status === "info");
+  const orderedChecks = orderedSummaryItems(summary.items);
+  return (
+    <>
+      <section className={`syncHero ${summary.tone}`}>
+        <div className="syncStatusBlock">
+          <div className={`statusDot ${summary.tone}`} />
+          <div>
+            <div className="eyebrow">Sync status</div>
+            <h2>{summary.label}</h2>
+            <p>{summary.description}</p>
+          </div>
+        </div>
+        <div className="heroActions">
+          <button className="primaryButton large" onClick={() => onAction("syncAll")} disabled={loading || !!runningAction}>
+            {runningAction ? "Sync running..." : loading ? "Checking..." : "Sync all"}
+          </button>
+          <button className="ghostButton large" onClick={onPreview} disabled={!!runningAction}>Preview changes</button>
+        </div>
+      </section>
+
+      <div className="overviewGrid">
+        <Panel title="Managed content" subtitle="The simple surface shows counts. Open Resources for item-level detail.">
+          <div className="metricGrid">
+            <Metric label="Skills" value={state.skills.length} />
+            <Metric label="Commands" value={state.commands.length} />
+            <Metric label="Designs" value={state.designs.length} />
+            <Metric label="MCP servers" value={state.registry.servers.length} />
+          </div>
+        </Panel>
+
+        <Panel title="Targets" subtitle="Current install state across supported tools.">
+          <div className="targetList">
+            <TargetStatus label="Claude Code" status={toolById["claude-code"]?.status ?? "unknown"} />
+            <TargetStatus label="Codex" status={toolById.codex?.status ?? "unknown"} />
+            <TargetStatus label="OpenCode" status={toolById.opencode?.status ?? "unknown"} />
+            <TargetStatus label="Copilot CLI" status={toolById["github-copilot-cli"]?.status ?? "unknown"} />
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Current checks" subtitle={`${summary.counts.synced} synced, ${summary.counts.outOfSync} not in sync, ${summary.counts.attention} need attention.`}>
+        {summary.items.length === 0 ? (
+          <div className="empty">No managed checks found for this repository.</div>
+        ) : (
+          <>
+            <div className="checkList compact">
+              {orderedChecks.slice(0, 6).map((item) => (
+                <CheckRow key={`${item.label}-${item.status}`} item={item} />
+              ))}
+            </div>
+            {orderedChecks.length > 6 && (
+              <details className="inlineDetails">
+                <summary>Show all checks ({orderedChecks.length})</summary>
+                <div className="checkList">
+                  {orderedChecks.slice(6).map((item) => (
+                    <CheckRow key={`${item.label}-${item.status}-${item.message}`} item={item} />
+                  ))}
+                </div>
+              </details>
+            )}
+          </>
+        )}
+      </Panel>
+
+      <details className="disclosurePanel">
+        <summary>More sync options</summary>
+        <div className="buttonRow padded">
+          <button className="ghostButton" onClick={() => onAction("linkAgents")} disabled={!!runningAction}>Sync links and files</button>
+          <button className="ghostButton" onClick={() => onAction("syncMcps")} disabled={!!runningAction}>Sync MCPs</button>
+          <button className="ghostButton" onClick={() => onAction("syncClaudeCode")} disabled={!!runningAction}>Sync Claude Code</button>
+          <button className="ghostButton" onClick={() => onAction("syncCodex")} disabled={!!runningAction}>Sync Codex</button>
+          <button className="ghostButton" onClick={() => onAction("syncOpenCode")} disabled={!!runningAction}>Sync OpenCode</button>
+          <button className="ghostButton" onClick={() => onAction("dryRunMcps")} disabled={!!runningAction}>Preview MCPs</button>
+        </div>
+      </details>
+
+      {diffPreview && (
+        <Panel
+          title="Previewed changes"
+          subtitle={changedSections.length > 0 ? `${changedSections.length} changed or attention-worthy section${changedSections.length === 1 ? "" : "s"}.` : "No file changes are expected for this action."}
+        >
+          <div className="previewStack standalone">
+            {changedSections.length > 0 ? (
+              changedSections.map((section) => (
+                <PreviewSectionCard key={`${section.title}-${section.path}`} section={section} defaultOpen={section.status === "error"} />
+              ))
+            ) : (
+              <div className="empty">No changes found. The managed targets already match the selected repository.</div>
+            )}
+            {unchangedSections.length > 0 && (
+              <details className="inlineDetails">
+                <summary>Show unchanged checks ({unchangedSections.length})</summary>
+                <div className="previewStack standalone">
+                  {unchangedSections.map((section) => (
+                    <PreviewSectionCard key={`${section.title}-${section.path}`} section={section} />
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        </Panel>
+      )}
+
+      {(structuredOutput || output !== "No command has run yet." || meta !== "Ready.") && (
+        <LastRunCard
+          meta={meta}
+          output={output}
+          structuredOutput={structuredOutput}
+          lastRefreshed={lastRefreshed}
+          onClear={onClearOutput}
+          copyText={copyText}
+        />
+      )}
+    </>
+  );
+}
+
+function SourcesView({
+  state,
+  repoPath,
+  loading,
+  onChooseRepo,
+  onResetRepo,
+  onImport,
+  onRefresh,
+  openPath,
+  copyText,
+}: {
+  state: AppState;
+  repoPath: string;
+  loading: boolean;
+  onChooseRepo: () => void;
+  onResetRepo: () => void;
+  onImport: () => void;
+  onRefresh: () => void;
+  openPath: (path: string) => void;
+  copyText: (text: string) => void;
+}) {
+  const sourceConfig = state.sourceConfig;
+  return (
+    <>
+      <Panel title="Repository" subtitle={repoPath ? "Selected manually" : "Auto-detected"}>
+        <div className="repoSummary">
+          <div>
+            <div className="eyebrow">Source of truth</div>
+            <div className="repoPath">{state.repo?.root}</div>
+          </div>
+          <div className="buttonRow">
+            <button className="ghostButton" onClick={onChooseRepo}>Choose folder</button>
+            <button className="ghostButton" onClick={onImport}>Clone or import</button>
+            {repoPath && <button className="ghostButton" onClick={onResetRepo}>Reset auto-detect</button>}
+            <button className="ghostButton" onClick={onRefresh} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</button>
+            <button className="ghostButton" onClick={() => state.repo && openPath(state.repo.root)}>Open repo</button>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Source config"
+        subtitle={sourceConfig.exists ? sourceConfig.path : "No sources.json configured."}
+      >
+        <div className="sourceConfigHeader">
+          <StatusPill value={!sourceConfig.exists ? "not-configured" : sourceConfig.valid ? "valid" : "invalid"} />
+          <div className="buttonRow compact">
+            {sourceConfig.exists && <button className="smallButton" onClick={() => openPath(sourceConfig.path)}>Open sources.json</button>}
+            {sourceConfig.exists && <button className="smallButton" onClick={() => copyText(sourceConfig.path)}>Copy path</button>}
+          </div>
+        </div>
+        {!sourceConfig.exists ? (
+          <div className="empty">This repo uses only its local skills, commands, designs, and MCP registry.</div>
+        ) : !sourceConfig.valid ? (
+          <div className="errorBox">{sourceConfig.error}</div>
+        ) : sourceConfig.sources.length === 0 ? (
+          <div className="empty">sources.json exists but does not list any sources.</div>
+        ) : (
+          <div className="sourceList">
+            {sourceConfig.sources.map((source) => (
+              <details key={`${source.name}-${source.resolvedPath || source.path}`} className="sourceCard">
+                <summary>
+                  <div>
+                    <strong>{source.name}</strong>
+                    <span>{source.resources.join(", ") || "No resources enabled"}</span>
+                  </div>
+                  <StatusPill value={source.enabled ? source.status : "disabled"} />
+                </summary>
+                <div className="sourceDetails">
+                  <Field label="Configured path or URL"><div className="path">{source.path || "n/a"}</div></Field>
+                  <Field label="Resolved path"><div className="path">{source.resolvedPath || "n/a"}</div></Field>
+                  <Field label="Message">{source.message}</Field>
+                  <div className="buttonRow compact">
+                    {source.resolvedPath && <button className="smallButton" onClick={() => openPath(source.resolvedPath)}>Open source</button>}
+                    {source.resolvedPath && <button className="smallButton" onClick={() => copyText(source.resolvedPath)}>Copy resolved path</button>}
+                  </div>
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
+      </Panel>
+
+      {sourceConfig.warnings.length > 0 && (
+        <Panel title="Source warnings" subtitle="Non-fatal source loading issues.">
+          <ul className="warningList">
+            {sourceConfig.warnings.map((warning) => (
+              <li key={warning} className="warningItem">{warning}</li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+    </>
+  );
+}
+
+function ResourcesView({
+  state,
+  onAction,
+  openPath,
+  copyText,
+}: {
+  state: AppState;
+  onAction: (action: string) => void;
+  openPath: (path: string) => void;
+  copyText: (text: string) => void;
+}) {
+  const [tab, setTab] = useState<ResourceTab>("skills");
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<ResourceSelection | null>(null);
+
+  useEffect(() => {
+    setSelected(null);
+    setQuery("");
+  }, [tab]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const resourceCounts: Record<ResourceTab, number> = {
+    skills: state.skills.length,
+    commands: state.commands.length,
+    mcps: state.registry.servers.length,
+    designs: state.designs.length,
+  };
+
+  return (
+    <>
+      <Panel title="Resources" subtitle="Browse managed resources. Select any item to inspect technical details.">
+        <div className="resourceToolbar">
+          <div className="segmentedControl">
+            {(["skills", "commands", "mcps", "designs"] as ResourceTab[]).map((name) => (
+              <button key={name} className={tab === name ? "active" : ""} onClick={() => setTab(name)}>
+                {resourceTabLabel(name)}
+                <span>{resourceCounts[name]}</span>
+              </button>
+            ))}
+          </div>
+          <input
+            className="textInput searchInput"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={`Search ${resourceTabLabel(tab).toLowerCase()}`}
+          />
+        </div>
+        <ResourceList
+          state={state}
+          tab={tab}
+          query={normalizedQuery}
+          selected={selected}
+          onSelect={setSelected}
+        />
+      </Panel>
+
+      {selected && (
+        <ResourceDrawer
+          state={state}
+          selection={selected}
+          onClose={() => setSelected(null)}
+          onAction={onAction}
+          openPath={openPath}
+          copyText={copyText}
+        />
+      )}
+    </>
+  );
+}
+
+function AdvancedView({
+  state,
+  effectiveRepoPath,
+  diffPreview,
+  diffChangedOnly,
+  logs,
+  profiles,
+  runtimeInfo,
+  scriptVersions,
+  agentsMdInfo,
+  safetyWarnings,
+  updateResult,
+  checkingUpdate,
+  repoValidation,
+  validating,
+  onAction,
+  onPreview,
+  onChangedOnly,
+  onRefreshLogs,
+  onRefreshProfiles,
+  onClearLogs,
+  onValidate,
+  onLoadAboutInfo,
+  onCheckUpdates,
+  onOpenAgentsMd,
+  onRefresh,
+  openPath,
+  copyText,
+}: {
+  state: AppState;
+  effectiveRepoPath: string;
+  diffPreview: DiffPreview | null;
+  diffChangedOnly: boolean;
+  logs: LogEntry[];
+  profiles: Profile[];
+  runtimeInfo: RuntimeInfo | null;
+  scriptVersions: ScriptVersionInfo[];
+  agentsMdInfo: AgentsMdInfo | null;
+  safetyWarnings: string[];
+  updateResult: UpdateCheckResult | null;
+  checkingUpdate: boolean;
+  repoValidation: RepoValidation | null;
+  validating: boolean;
+  onAction: (action: string) => void;
+  onPreview: (action?: string) => void;
+  onChangedOnly: (value: boolean) => void;
+  onRefreshLogs: () => void;
+  onRefreshProfiles: () => void;
+  onClearLogs: () => void;
+  onValidate: () => void;
+  onLoadAboutInfo: () => void;
+  onCheckUpdates: () => void;
+  onOpenAgentsMd: () => void;
+  onRefresh: () => void;
+  openPath: (path: string) => void;
+  copyText: (text: string) => void;
+}) {
+  return (
+    <div className="advancedStack">
+      <AdvancedSection title="Editor" subtitle="Create and modify repo resources.">
+        <Editor state={state} repoPath={effectiveRepoPath} onRefresh={onRefresh} />
+      </AdvancedSection>
+      <AdvancedSection title="Packaging" subtitle="Build distributable Claude skill and extension packages.">
+        <Packaging repoPath={effectiveRepoPath} />
+      </AdvancedSection>
+      <AdvancedSection title="Diff previews" subtitle="Inspect expected changes without syncing." onOpen={() => !diffPreview && onPreview()}>
+        <Diffs preview={diffPreview} changedOnly={diffChangedOnly} onChangedOnly={onChangedOnly} onPreview={onPreview} openPath={openPath} copyText={copyText} />
+      </AdvancedSection>
+      <AdvancedSection title="Tool paths" subtitle="Detected target paths and narrow tool sync actions.">
+        <Tools state={state} onAction={onAction} openPath={openPath} />
+      </AdvancedSection>
+      <AdvancedSection title="Validation" subtitle="Run deeper repository checks.">
+        <Validation onValidate={onValidate} repoValidation={repoValidation} validating={validating} />
+      </AdvancedSection>
+      <AdvancedSection title="Logs" subtitle="Recent sync command logs." onOpen={onRefreshLogs}>
+        <Logs logs={logs} onClear={onClearLogs} onRefresh={onRefreshLogs} />
+      </AdvancedSection>
+      <AdvancedSection title="Backups" subtitle="Backup paths parsed from recent runs." onOpen={onRefreshLogs}>
+        <Backups logs={logs} onRefresh={onRefreshLogs} openPath={openPath} copyText={copyText} />
+      </AdvancedSection>
+      <AdvancedSection title="Profiles" subtitle="Read-only sync profiles." onOpen={onRefreshProfiles}>
+        <Profiles profiles={profiles} />
+      </AdvancedSection>
+      <AdvancedSection title="Runtime and updates" subtitle="Diagnostics, dependencies, scripts, sources, and app updates." onOpen={onLoadAboutInfo}>
+        <About
+          runtimeInfo={runtimeInfo}
+          scriptVersions={scriptVersions}
+          agentsMdInfo={agentsMdInfo}
+          sourceConfig={state.sourceConfig}
+          safetyWarnings={safetyWarnings}
+          updateResult={updateResult}
+          checkingUpdate={checkingUpdate}
+          onCheckUpdates={onCheckUpdates}
+          onOpenAgentsMd={onOpenAgentsMd}
+          copyText={copyText}
+        />
+      </AdvancedSection>
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function TargetStatus({ label, status }: { label: string; status: string }) {
+  return (
+    <div className="targetStatus">
+      <span>{label}</span>
+      <StatusPill value={status} />
+    </div>
+  );
+}
+
+function CheckRow({ item }: { item: { label: string; status: string; message?: string } }) {
+  return (
+    <div className="checkRow">
+      <div>
+        <strong>{item.label}</strong>
+        {item.message && <span>{item.message}</span>}
+      </div>
+      <StatusPill value={item.status} />
+    </div>
+  );
+}
+
+function LastRunCard({
+  meta,
+  output,
+  structuredOutput,
+  lastRefreshed,
+  onClear,
+  copyText,
+}: {
+  meta: string;
+  output: string;
+  structuredOutput: StructuredOutput | null;
+  lastRefreshed: string;
+  onClear: () => void;
+  copyText: (text: string) => void;
+}) {
+  const ok = structuredOutput ? structuredOutput.exitCode === 0 || structuredOutput.exitCode === undefined : !output.toLowerCase().includes("error");
+  const terminalLog = lastRunTerminalLog(meta, output, structuredOutput, lastRefreshed);
+  return (
+    <Panel title="Last run" subtitle={`${meta}${lastRefreshed ? ` Last refreshed: ${lastRefreshed}` : ""}`}>
+      <div className="lastRun">
+        <div className="structuredSummary">
+          <StatusPill value={ok ? "ok" : "error"} />
+          {structuredOutput?.exitCode !== undefined && <span className="path">exit: {structuredOutput.exitCode}</span>}
+          {structuredOutput && (
+            <>
+              <span className="path">{structuredOutput.changed.length} changed</span>
+              <span className="path">{structuredOutput.warnings.length} warnings</span>
+              <span className="path">{structuredOutput.errors.length} errors</span>
+            </>
+          )}
+        </div>
+        <div className="buttonRow compact">
+          <button className="smallButton" onClick={() => copyText(terminalLog)}>Copy log</button>
+          <button className="smallButton" onClick={onClear}>Clear</button>
+        </div>
+      </div>
+      <details className="inlineDetails">
+        <summary>Show technical log</summary>
+        {structuredOutput ? <StructuredOutputView output={structuredOutput} /> : <pre className="logOutput">{output || "<empty>"}</pre>}
+      </details>
+    </Panel>
+  );
+}
+
+function ResourceList({
+  state,
+  tab,
+  query,
+  selected,
+  onSelect,
+}: {
+  state: AppState;
+  tab: ResourceTab;
+  query: string;
+  selected: ResourceSelection | null;
+  onSelect: (selection: ResourceSelection) => void;
+}) {
+  if (tab === "skills") {
+    const skills = state.skills.filter((item) => matchesResourceQuery(query, item.name, item.description, item.sourceName, item.sourcePath));
+    return (
+      <div className="resourceList">
+        {skills.length === 0 ? <div className="empty">No skills match this search.</div> : skills.map((skill) => (
+          <button key={skill.path} className={resourceRowClass(selected, "skills", skill.path)} onClick={() => onSelect({ kind: "skills", item: skill })}>
+            <div className="resourceMain">
+              <strong>{skill.name}</strong>
+              <span>{skill.description || "No description."}</span>
+            </div>
+            <div className="statusTrail">
+              <StatusPill value={skill.sourceKind} />
+              <StatusPill value={resourceAggregateStatus(Object.values(skill.installs))} />
+            </div>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  if (tab === "commands") {
+    const commands = state.commands.filter((item) => matchesResourceQuery(query, item.name, item.description, item.sourceName, item.sourcePath));
+    return (
+      <div className="resourceList">
+        {commands.length === 0 ? <div className="empty">No commands match this search.</div> : commands.map((command) => (
+          <button key={command.path} className={resourceRowClass(selected, "commands", command.path)} onClick={() => onSelect({ kind: "commands", item: command })}>
+            <div className="resourceMain">
+              <strong>/{command.name}</strong>
+              <span>{command.description || "No description."}</span>
+            </div>
+            <div className="statusTrail">
+              <StatusPill value={command.sourceKind} />
+              <StatusPill value={resourceAggregateStatus(Object.values(command.installs))} />
+            </div>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  if (tab === "mcps") {
+    const servers = state.registry.servers.filter((item) => matchesResourceQuery(query, item.name, item.description, item.url, item.command));
+    return (
+      <div className="resourceList">
+        {!state.registry.valid && <div className="errorBox">{state.registry.error}</div>}
+        {servers.length === 0 ? <div className="empty">No MCP servers match this search.</div> : servers.map((server) => (
+          <button key={server.name} className={resourceRowClass(selected, "mcps", server.name)} onClick={() => onSelect({ kind: "mcps", item: server })}>
+            <div className="resourceMain">
+              <strong>{server.name}</strong>
+              <span>{server.description || server.url || [server.command, ...server.args].join(" ") || "No endpoint configured."}</span>
+            </div>
+            <div className="statusTrail">
+              <StatusPill value={server.enabled ? "enabled" : "disabled"} />
+              <StatusPill value={mcpAggregateStatus(state, server)} />
+            </div>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  const designs = state.designs.filter((item) => matchesResourceQuery(query, item.name, item.description, item.sourceName, item.file));
+  return (
+    <div className="resourceList">
+      {designs.length === 0 ? <div className="empty">No designs match this search.</div> : designs.map((design) => (
+        <button key={design.path} className={resourceRowClass(selected, "designs", design.path)} onClick={() => onSelect({ kind: "designs", item: design })}>
+          <div className="resourceMain">
+            <strong>{design.name}</strong>
+            <span>{design.description || "No description."}</span>
+          </div>
+          <div className="statusTrail">
+            <StatusPill value={design.sourceKind} />
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ResourceDrawer({
+  state,
+  selection,
+  onClose,
+  onAction,
+  openPath,
+  copyText,
+}: {
+  state: AppState;
+  selection: ResourceSelection;
+  onClose: () => void;
+  onAction: (action: string) => void;
+  openPath: (path: string) => void;
+  copyText: (text: string) => void;
+}) {
+  const title = resourceSelectionTitle(selection);
+  return (
+    <div className="drawerBackdrop">
+      <aside className="drawer" role="dialog" aria-modal="true" aria-label={`${title} details`}>
+        <div className="drawerHeader">
+          <div>
+            <div className="eyebrow">Details</div>
+            <h2>{title}</h2>
+          </div>
+          <button className="ghostButton" onClick={onClose}>Close</button>
+        </div>
+        <div className="drawerBody">
+          {selection.kind === "skills" && <SkillDetail skill={selection.item} openPath={openPath} copyText={copyText} />}
+          {selection.kind === "commands" && <CommandDetail command={selection.item} state={state} openPath={openPath} copyText={copyText} />}
+          {selection.kind === "mcps" && <McpDetail server={selection.item} state={state} onAction={onAction} openPath={openPath} copyText={copyText} />}
+          {selection.kind === "designs" && <DesignDetail design={selection.item} openPath={openPath} copyText={copyText} />}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function SkillDetail({ skill, openPath, copyText }: { skill: SkillItem; openPath: (path: string) => void; copyText: (text: string) => void }) {
+  return (
+    <div className="detailPane">
+      <Field label="Description">{skill.description || "No description."}</Field>
+      <Field label="Source">
+        <StatusPill value={skill.sourceKind} />
+        <div className="path">{skill.sourceName}</div>
+        <div className="path">{skill.sourcePath}</div>
+      </Field>
+      <Field label="Path"><div className="path">{skill.path}</div></Field>
+      <Field label="SKILL.md"><div className="path">{skill.file}</div></Field>
+      <Field label="Installed">
+        <div className="buttonRow">
+          {Object.entries(skill.installs).map(([tool, status]) => <StatusPill key={tool} value={`${tool}:${status}`} />)}
+        </div>
+      </Field>
+      <Field label="Frontmatter"><pre className="fieldDiff">{JSON.stringify(skill.frontmatter, null, 2)}</pre></Field>
+      <Field label="Preview"><pre className="previewText">{skill.preview || "<empty>"}</pre></Field>
+      <div className="buttonRow padded compact">
+        <button className="ghostButton" onClick={() => openPath(skill.file)}>Open SKILL.md</button>
+        <button className="ghostButton" onClick={() => openPath(skill.path)}>Open folder</button>
+        <button className="ghostButton" onClick={() => copyText(skill.path)}>Copy path</button>
+      </div>
+    </div>
+  );
+}
+
+function CommandDetail({ command, state, openPath, copyText }: { command: CommandItem; state: AppState; openPath: (path: string) => void; copyText: (text: string) => void }) {
+  return (
+    <div className="detailPane">
+      <Field label="Description">{command.description || "No description."}</Field>
+      <Field label="Argument hint">{command.argumentHint || "None"}</Field>
+      <Field label="Source">
+        <StatusPill value={command.sourceKind} />
+        <div className="path">{command.sourceName}</div>
+        <div className="path">{command.sourcePath}</div>
+      </Field>
+      <Field label="Path"><div className="path">{command.path}</div></Field>
+      <Field label="Installed">
+        <div className="buttonRow">
+          {Object.entries(command.installs).map(([tool, status]) => <StatusPill key={tool} value={`${tool}:${status}`} />)}
+        </div>
+      </Field>
+      <Field label="Frontmatter"><pre className="fieldDiff">{JSON.stringify(command.frontmatter, null, 2)}</pre></Field>
+      <Field label="Preview"><pre className="previewText">{command.preview || "<empty>"}</pre></Field>
+      <div className="buttonRow padded compact">
+        <button className="ghostButton" onClick={() => openPath(command.path)}>Open command</button>
+        <button className="ghostButton" onClick={() => state.repo?.paths.commands && openPath(state.repo.paths.commands)}>Open folder</button>
+        <button className="ghostButton" onClick={() => copyText(command.path)}>Copy path</button>
+      </div>
+    </div>
+  );
+}
+
+function McpDetail({
+  server,
+  state,
+  onAction,
+  openPath,
+  copyText,
+}: {
+  server: McpServer;
+  state: AppState;
+  onAction: (action: string) => void;
+  openPath: (path: string) => void;
+  copyText: (text: string) => void;
+}) {
+  return (
+    <div className="detailPane">
+      <Field label="Description">{server.description || "No description."}</Field>
+      <Field label="Type / transport">{server.serverType} / {server.transport}</Field>
+      <Field label="Endpoint"><div className="path">{server.url || [server.command, ...server.args].join(" ")}</div></Field>
+      <Field label="Secrets / headers">{server.hasHeaders ? "headers present" : "no headers"}; {server.hasEnvironment ? "environment present" : "no environment"}</Field>
+      <Field label="Targets">{Object.entries(server.targets).map(([target, enabled]) => `${target}:${enabled}`).join(", ") || "All/default"}</Field>
+      <Field label="Install / auth">
+        <div className="statusGrid">
+          {["claude-code", "codex", "opencode"].map((tool) => {
+            const status = findMcp(state, tool, server.name);
+            return (
+              <div key={tool}>
+                <strong>{labelize(tool)}</strong>
+                <McpCell status={status} />
+                {status?.authCommand && <div className="path">{status.authCommand}</div>}
+              </div>
+            );
+          })}
+        </div>
+      </Field>
+      <Field label="Raw JSON"><pre className="fieldDiff">{server.rawJson}</pre></Field>
+      <div className="buttonRow padded compact">
+        <button className="ghostButton" onClick={() => openPath(state.registry.path)}>Open registry</button>
+        <button className="ghostButton" onClick={() => copyText(server.rawJson)}>Copy server JSON</button>
+        <button className="ghostButton" onClick={() => copyText(findMcp(state, "codex", server.name)?.authCommand ?? `codex mcp login ${server.name}`)}>Copy auth command</button>
+        <button className="ghostButton" onClick={() => onAction("syncMcps")}>Sync MCPs</button>
+      </div>
+    </div>
+  );
+}
+
+function DesignDetail({ design, openPath, copyText }: { design: DesignItem; openPath: (path: string) => void; copyText: (text: string) => void }) {
+  return (
+    <div className="detailPane">
+      <Field label="Description">{design.description || "No description."}</Field>
+      <Field label="Source">
+        <StatusPill value={design.sourceKind} />
+        <div className="path">{design.sourceName}</div>
+        <div className="path">{design.sourcePath}</div>
+      </Field>
+      <Field label="DESIGN.md"><div className="path">{design.file}</div></Field>
+      <Field label="Frontmatter"><pre className="fieldDiff">{JSON.stringify(design.frontmatter, null, 2)}</pre></Field>
+      <Field label="Preview"><pre className="previewText">{design.preview || "<empty>"}</pre></Field>
+      <div className="buttonRow padded compact">
+        <button className="ghostButton" onClick={() => openPath(design.file)}>Open DESIGN.md</button>
+        <button className="ghostButton" onClick={() => copyText(design.path)}>Copy path</button>
+      </div>
+    </div>
+  );
+}
+
+function AdvancedSection({ title, subtitle, children, onOpen }: { title: string; subtitle: string; children: React.ReactNode; onOpen?: () => void }) {
+  const [open, setOpen] = useState(false);
+
+  function toggle() {
+    setOpen((current) => {
+      const nextOpen = !current;
+      if (nextOpen) onOpen?.();
+      return nextOpen;
+    });
+  }
+
+  return (
+    <section className={`advancedSection ${open ? "open" : ""}`}>
+      <button type="button" className="advancedSummary" aria-expanded={open} onClick={toggle}>
+        <span>
+          <strong>{title}</strong>
+          <small>{subtitle}</small>
+        </span>
+      </button>
+      {open && <div className="advancedBody">{children}</div>}
+    </section>
   );
 }
 
@@ -1942,50 +2774,65 @@ function PlanDialog({
   onCancel: () => void;
   onRun: () => void;
 }) {
+  const visibleSections = changedPreviewSections(preview);
   return (
     <div className="modalBackdrop">
       <div className="modal">
         <div className="panelHeader">
           <div>
-            <div className="eyebrow">Review before running</div>
+            <div className="eyebrow">Review sync</div>
             <h2>{plan.title}</h2>
+            <p>{plan.note}</p>
           </div>
         </div>
         <div className="modalBody">
-          <Field label="Command to run"><pre className="commandBox">{plan.displayCommand}</pre></Field>
-          <Field label="Working directory"><div className="path">{plan.cwd}</div></Field>
-          <Field label="Files likely affected">
-            <ul>{plan.affectedPaths.map((path) => <li key={path} className="path">{path}</li>)}</ul>
-          </Field>
-          <Field label="Backups">
-            {plan.backupsMayBeCreated ? "Backups may be created by the underlying repo script." : "No backups should be created for this dry-run action."}
-          </Field>
-          <Field label="Note">{plan.note}</Field>
           <Field label="Preview">
             {preview ? (
               <div className="previewStack">
-                {preview.sections.map((section) => (
-                  <details className="previewSection" key={`${section.title}-${section.path}`} open={section.status === "changed" || section.status === "error"}>
-                    <summary>
-                      <span>{section.title}</span>
-                      <StatusPill value={section.status} />
-                    </summary>
-                    <div className="path">{section.path}</div>
-                    <pre className="diffBox">{section.diff}</pre>
-                  </details>
+                {(visibleSections.length > 0 ? visibleSections : preview.sections.slice(0, 4)).map((section) => (
+                  <PreviewSectionCard key={`${section.title}-${section.path}`} section={section} defaultOpen={section.status === "changed" || section.status === "error"} />
                 ))}
               </div>
             ) : (
               <div className="path">Preview unavailable.</div>
             )}
           </Field>
+          <details className="inlineDetails">
+            <summary>Technical details</summary>
+            <Field label="Command to run"><pre className="commandBox">{plan.displayCommand}</pre></Field>
+            <Field label="Working directory"><div className="path">{plan.cwd}</div></Field>
+            <Field label="Files likely affected">
+              <ul>{plan.affectedPaths.map((path) => <li key={path} className="path">{path}</li>)}</ul>
+            </Field>
+            <Field label="Backups">
+              {plan.backupsMayBeCreated ? "Backups may be created by the underlying repo script." : "No backups should be created for this preview action."}
+            </Field>
+          </details>
         </div>
         <div className="modalActions">
           <button className="ghostButton" onClick={onCancel}>Cancel</button>
-          <button className="primaryButton" onClick={onRun}>Run Command</button>
+          <button className="primaryButton" onClick={onRun}>{runLabelForAction(plan.action)}</button>
         </div>
       </div>
     </div>
+  );
+}
+
+function PreviewSectionCard({ section, defaultOpen = false }: { section: DiffSection; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className={`previewSection ${open ? "open" : ""}`}>
+      <button type="button" className="previewSectionButton" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <span>{section.title}</span>
+        <StatusPill value={section.status} />
+      </button>
+      {open && (
+        <div className="previewSectionBody">
+          <div className="path">{section.path}</div>
+          <pre className="diffBox">{section.diff}</pre>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -2181,6 +3028,278 @@ function StructuredOutputView({ output }: { output: StructuredOutput }) {
       </details>
     </div>
   );
+}
+
+function deriveSyncSummary(state: AppState | null, loading: boolean, structuredOutput: StructuredOutput | null, runningAction: string | null): SyncSummary {
+  if (!state || !state.repo) {
+    return {
+      state: loading || runningAction ? "checking" : "needsAttention",
+      label: loading || runningAction ? "Checking" : "Needs attention",
+      description: runningAction ? `${labelize(runningAction)} is still running.` : state?.repoError ?? "No agents repository is currently available.",
+      tone: loading || runningAction ? "checking" : "danger",
+      items: [],
+      counts: { synced: 0, outOfSync: 0, attention: loading || runningAction ? 0 : 1 },
+    };
+  }
+
+  const items: SyncSummary["items"] = [];
+  const addItem = (label: string, status: string, message?: string) => {
+    items.push({ label, status: status || "unknown", message });
+  };
+
+  addItem("MCP registry", state.registry.valid ? "valid" : "invalid", state.registry.error);
+
+  if (!state.sourceConfig.exists) {
+    addItem("Source config", "not-configured", "Using only the selected repository.");
+  } else {
+    addItem("Source config", state.sourceConfig.valid ? "valid" : "invalid", state.sourceConfig.error);
+    for (const source of state.sourceConfig.sources) {
+      addItem(`Source: ${source.name}`, source.enabled ? source.status : "disabled", source.message);
+    }
+  }
+
+  for (const warning of state.sourceConfig.warnings) {
+    addItem("Source warning", "warning", warning);
+  }
+
+  for (const tool of state.tools) {
+    addItem(tool.label, tool.status);
+    for (const [name, resource] of Object.entries(tool.resources)) {
+      addItem(`${tool.label}: ${labelize(name)}`, resource.status, resource.message);
+    }
+  }
+
+  for (const server of state.registry.servers) {
+    if (!server.enabled) {
+      addItem(`MCP: ${server.name}`, "disabled", "Server is disabled in the registry.");
+      continue;
+    }
+    for (const tool of ["claude-code", "codex", "opencode"]) {
+      if (!isServerEnabledForTool(server, tool)) continue;
+      const status = findMcp(state, tool, server.name);
+      addItem(`${server.name} in ${labelize(tool)}`, status?.status ?? "unknown", status?.message);
+      const authSummaryStatus = authStatusForSummary(status?.authStatus);
+      if (authSummaryStatus) {
+        addItem(`${server.name} auth in ${labelize(tool)}`, authSummaryStatus, authSummaryMessage(status?.authStatus, status?.authCommand));
+      }
+    }
+  }
+
+  if (structuredOutput && structuredOutput.exitCode !== undefined && structuredOutput.exitCode !== 0) {
+    addItem("Last sync run", "error", `Exited with ${structuredOutput.exitCode}.`);
+  }
+
+  const counts = items.reduce(
+    (acc, item) => {
+      const category = statusCategory(item.status);
+      if (category === "attention") acc.attention += 1;
+      else if (category === "outOfSync") acc.outOfSync += 1;
+      else acc.synced += 1;
+      return acc;
+    },
+    { synced: 0, outOfSync: 0, attention: 0 },
+  );
+
+  if (counts.attention > 0) {
+    const firstAttention = firstSummaryItemByCategory(items, "attention");
+    return {
+      state: runningAction ? "checking" : "needsAttention",
+      label: runningAction ? "Sync running" : "Needs attention",
+      description: runningAction ? `${labelize(runningAction)} is running. Background refresh is paused until it finishes.` : summaryReason("Some sources, configs, tools, or recent sync output need review.", firstAttention),
+      tone: runningAction ? "checking" : "danger",
+      items,
+      counts,
+    };
+  }
+
+  if (counts.outOfSync > 0) {
+    const firstOutOfSync = firstSummaryItemByCategory(items, "outOfSync");
+    return {
+      state: runningAction ? "checking" : "notInSync",
+      label: runningAction ? "Sync running" : "Not in sync",
+      description: runningAction ? `${labelize(runningAction)} is running. Background refresh is paused until it finishes.` : summaryReason("One or more managed targets differ from the selected repository.", firstOutOfSync),
+      tone: runningAction ? "checking" : "warn",
+      items,
+      counts,
+    };
+  }
+
+  return {
+    state: runningAction ? "checking" : "inSync",
+    label: runningAction ? "Sync running" : "In sync",
+    description: runningAction ? `${labelize(runningAction)} is running. Background refresh is paused until it finishes.` : "Managed tools match the selected repository.",
+    tone: runningAction ? "checking" : "ok",
+    items,
+    counts,
+  };
+}
+
+function statusCategory(status: string): "synced" | "outOfSync" | "attention" {
+  const value = status.toLowerCase();
+  if (
+    value === "error" ||
+    value === "invalid" ||
+    value === "needs-auth" ||
+    value === "unknown" ||
+    value === "warning" ||
+    value === "cli-missing" ||
+    value === "limited"
+  ) {
+    return "attention";
+  }
+  if (
+    value === "missing" ||
+    value === "drift" ||
+    value === "unmanaged" ||
+    value === "source-only" ||
+    value === "available"
+  ) {
+    return "outOfSync";
+  }
+  return "synced";
+}
+
+function orderedSummaryItems(items: SyncSummary["items"]) {
+  const rank = (item: SyncSummary["items"][number]) => {
+    const category = statusCategory(item.status);
+    if (category === "attention") return 0;
+    if (category === "outOfSync") return 1;
+    return 2;
+  };
+  return [...items].sort((left, right) => rank(left) - rank(right));
+}
+
+function firstSummaryItemByCategory(items: SyncSummary["items"], category: "attention" | "outOfSync") {
+  return orderedSummaryItems(items).find((item) => statusCategory(item.status) === category);
+}
+
+function summaryReason(fallback: string, item?: SyncSummary["items"][number]) {
+  if (!item) return fallback;
+  return `${item.label}: ${item.message || labelize(item.status)}.`;
+}
+
+function authStatusForSummary(status?: string) {
+  if (!status || status === "not-supported" || status === "authenticated") return null;
+  if (status === "unknown") return "diagnostic";
+  return status;
+}
+
+function authSummaryMessage(status?: string, command?: string) {
+  if (status === "unknown") return command ? `Auth status could not be checked automatically. Use ${command} if this server needs login.` : "Auth status could not be checked automatically.";
+  return command;
+}
+
+function changedPreviewSections(preview: DiffPreview | null) {
+  return (preview?.sections ?? []).filter((section) => section.status !== "unchanged" && section.status !== "info");
+}
+
+function runLabelForAction(action: string) {
+  if (action.startsWith("dryRun")) return "Run preview";
+  if (action === "linkAgents") return "Sync links";
+  if (action === "syncMcps") return "Sync MCPs";
+  if (action.startsWith("sync")) return "Sync now";
+  return "Run";
+}
+
+function lastRunTerminalLog(meta: string, output: string, structuredOutput: StructuredOutput | null, lastRefreshed: string) {
+  if (!structuredOutput) return output || "<empty>";
+  return [
+    `status: ${meta}`,
+    lastRefreshed ? `last refreshed: ${lastRefreshed}` : "",
+    `exit: ${structuredOutput.exitCode ?? "unknown"}`,
+    "",
+    "stdout:",
+    structuredOutput.rawStdout.trimEnd() || "<empty>",
+    "",
+    "stderr:",
+    structuredOutput.rawStderr.trimEnd() || "<empty>",
+  ]
+    .filter((line, index) => line || index > 2)
+    .join("\n");
+}
+
+function resourceTabLabel(tab: ResourceTab) {
+  switch (tab) {
+    case "skills":
+      return "Skills";
+    case "commands":
+      return "Commands";
+    case "mcps":
+      return "MCP servers";
+    case "designs":
+      return "Designs";
+  }
+}
+
+function matchesResourceQuery(query: string, ...values: string[]) {
+  if (!query) return true;
+  return values.some((value) => value.toLowerCase().includes(query));
+}
+
+function resourceRowClass(selected: ResourceSelection | null, kind: ResourceTab, id: string) {
+  return `resourceRow ${selected?.kind === kind && resourceSelectionId(selected) === id ? "selected" : ""}`;
+}
+
+function resourceSelectionId(selection: ResourceSelection) {
+  switch (selection.kind) {
+    case "skills":
+      return selection.item.path;
+    case "commands":
+      return selection.item.path;
+    case "mcps":
+      return selection.item.name;
+    case "designs":
+      return selection.item.path;
+  }
+}
+
+function resourceSelectionTitle(selection: ResourceSelection) {
+  switch (selection.kind) {
+    case "skills":
+      return selection.item.name;
+    case "commands":
+      return `/${selection.item.name}`;
+    case "mcps":
+      return selection.item.name;
+    case "designs":
+      return selection.item.name;
+  }
+}
+
+function resourceAggregateStatus(statuses: string[]) {
+  if (statuses.length === 0) return "unknown";
+  if (statuses.every((status) => status === "not-supported")) return "not-supported";
+  if (statuses.some((status) => statusCategory(status) === "attention")) return "warning";
+  if (statuses.some((status) => statusCategory(status) === "outOfSync")) return "drift";
+  return "installed";
+}
+
+function mcpAggregateStatus(state: AppState, server: McpServer) {
+  if (!server.enabled) return "disabled";
+  const statuses = ["claude-code", "codex", "opencode"]
+    .filter((tool) => isServerEnabledForTool(server, tool))
+    .map((tool) => findMcp(state, tool, server.name)?.status ?? "unknown");
+  return resourceAggregateStatus(statuses);
+}
+
+function isServerEnabledForTool(server: McpServer, tool: string) {
+  if (!server.enabled) return false;
+  const keys = Object.keys(server.targets);
+  if (keys.length === 0) return true;
+  const mapped = targetKeyForTool(tool);
+  const targetValue = server.targets[mapped] ?? server.targets[tool];
+  return targetValue !== false;
+}
+
+function targetKeyForTool(tool: string) {
+  switch (tool) {
+    case "claude-code":
+      return "claudeCode";
+    case "github-copilot-cli":
+      return "githubCopilotCli";
+    default:
+      return tool;
+  }
 }
 
 function findMcp(state: AppState, tool: string, server: string) {

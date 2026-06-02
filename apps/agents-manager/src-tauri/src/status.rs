@@ -5,10 +5,12 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const SOURCES_FILENAME: &str = "sources.json";
+static AUTH_STATUS_CACHE: OnceLock<Mutex<BTreeMap<String, (Instant, String)>>> = OnceLock::new();
 
 pub fn build_state(repo_override: Option<String>) -> AppState {
     match repo::detect_repo_with_override(repo_override) {
@@ -1470,7 +1472,11 @@ fn link_tool(
         ),
         (
             "commands".into(),
-            symlink_status(paths.get("commands").unwrap(), &repo.paths.commands),
+            not_supported_status(
+                paths.get("commands").unwrap(),
+                &repo.paths.commands,
+                "Command folders are inspectable resources, but the current sync scripts do not install them into this tool.",
+            ),
         ),
     ]);
     ToolStatus {
@@ -1596,6 +1602,19 @@ fn symlink_status(target: &str, expected: &str) -> InstallStatus {
                 error.to_string()
             },
         },
+    }
+}
+
+fn not_supported_status(target: &str, expected: &str, message: &str) -> InstallStatus {
+    let actual_path = fs::read_link(target)
+        .map(repo::display_path)
+        .unwrap_or_default();
+    InstallStatus {
+        status: "not-supported".into(),
+        target_path: target.into(),
+        expected_path: expected.into(),
+        actual_path,
+        message: message.into(),
     }
 }
 
@@ -1880,7 +1899,7 @@ fn mcp_status_with_type(
 ) -> McpInstallStatus {
     let auth_command = auth::auth_command_for_server(tool, server, server_type);
     let auth_status = if status == "installed" && auth_command.is_some() {
-        Some(auth::check_auth_availability(tool).0)
+        Some(cached_auth_status(tool))
     } else if status == "cli-missing" {
         Some("cli-missing".into())
     } else if auth_command.is_none() {
@@ -1897,6 +1916,22 @@ fn mcp_status_with_type(
         auth_status,
         auth_command,
     }
+}
+
+fn cached_auth_status(tool: &str) -> String {
+    let now = Instant::now();
+    let cache = AUTH_STATUS_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Ok(mut guard) = cache.lock() {
+        if let Some((checked_at, status)) = guard.get(tool) {
+            if now.duration_since(*checked_at) < Duration::from_secs(30) {
+                return status.clone();
+            }
+        }
+        let status = auth::check_auth_availability(tool).0;
+        guard.insert(tool.into(), (now, status.clone()));
+        return status;
+    }
+    auth::check_auth_availability(tool).0
 }
 
 fn truncate_preview(text: &str) -> String {
@@ -1922,9 +1957,16 @@ fn command_available(command: &str) -> bool {
 }
 
 fn rollup(statuses: Vec<String>) -> String {
-    if statuses.iter().all(|status| status == "installed") {
+    let managed: Vec<String> = statuses
+        .into_iter()
+        .filter(|status| status != "not-supported")
+        .collect();
+    if managed.is_empty() {
+        return "not-supported".into();
+    }
+    if managed.iter().all(|status| status == "installed") {
         "installed".into()
-    } else if statuses
+    } else if managed
         .iter()
         .all(|status| status == "missing" || status == "cli-missing")
     {
@@ -2142,6 +2184,55 @@ mod tests {
             .installs
             .values()
             .all(|status| status == "installed"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tool_status_ignores_unsupported_command_folder() {
+        let root = temp_path("agents-manager-tool-status-test");
+        let repo_root = root.join("repo");
+        let home = root.join("home");
+        let agents_home = home.join(".agents");
+        let claude_home = home.join(".claude");
+
+        fs::create_dir_all(repo_root.join("skills")).unwrap();
+        fs::create_dir_all(repo_root.join("commands")).unwrap();
+        fs::create_dir_all(&agents_home).unwrap();
+        fs::create_dir_all(&claude_home).unwrap();
+        fs::write(repo_root.join("AGENTS.md"), "# Test Agents\n").unwrap();
+        symlink_file(&repo_root.join("AGENTS.md"), &agents_home.join("AGENTS.md"));
+        symlink_dir(&repo_root.join("skills"), &agents_home.join("skills"));
+        symlink_file(
+            &agents_home.join("AGENTS.md"),
+            &claude_home.join("CLAUDE.md"),
+        );
+        symlink_dir(&agents_home.join("skills"), &claude_home.join("skills"));
+
+        let repo = AgentsRepo {
+            ok: true,
+            root: repo::display_path(&repo_root),
+            home: repo::display_path(&home),
+            agents_home: repo::display_path(&agents_home),
+            codex_home: repo::display_path(home.join(".codex")),
+            paths: RepoPaths {
+                agents: repo::display_path(repo_root.join("AGENTS.md")),
+                skills: repo::display_path(repo_root.join("skills")),
+                commands: repo::display_path(repo_root.join("commands")),
+                designs: repo::display_path(repo_root.join("designs")),
+                registry: repo::display_path(repo_root.join("mcp/servers.json")),
+                scripts: repo::display_path(repo_root.join("scripts")),
+            },
+        };
+
+        let tools = read_tools(&repo);
+        let claude = tools
+            .iter()
+            .find(|tool| tool.id == "claude-code")
+            .expect("Claude Code status should be present");
+
+        assert_eq!(claude.status, "installed");
+        assert_eq!(claude.resources["commands"].status, "not-supported");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2367,8 +2458,18 @@ mod tests {
         std::os::unix::fs::symlink(source, target).unwrap();
     }
 
+    #[cfg(unix)]
+    fn symlink_file(source: &Path, target: &Path) {
+        std::os::unix::fs::symlink(source, target).unwrap();
+    }
+
     #[cfg(windows)]
     fn symlink_dir(source: &Path, target: &Path) {
         std::os::windows::fs::symlink_dir(source, target).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn symlink_file(source: &Path, target: &Path) {
+        std::os::windows::fs::symlink_file(source, target).unwrap();
     }
 }

@@ -26,8 +26,10 @@ use std::process::Command;
 use std::time::UNIX_EPOCH;
 
 #[tauri::command]
-fn get_state(repo_path: Option<String>) -> Result<AppState, String> {
-    Ok(status::build_state(repo_path))
+async fn get_state(repo_path: Option<String>) -> Result<AppState, String> {
+    tauri::async_runtime::spawn_blocking(move || status::build_state(repo_path))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -38,15 +40,23 @@ fn plan_action(action: String, repo_path: Option<String>) -> Result<ScriptPlan, 
 
 #[tauri::command]
 async fn run_action(action: String, repo_path: Option<String>) -> Result<ScriptResult, String> {
-    let repo = repo::detect_repo_with_override(repo_path).map_err(|error| error.to_string())?;
-    let plan = scripts::plan_action(&repo, &action)?;
-    scripts::run_plan(&plan)
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo = repo::detect_repo_with_override(repo_path).map_err(|error| error.to_string())?;
+        let plan = scripts::plan_action(&repo, &action)?;
+        scripts::run_plan(&plan)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn preview_action(action: String, repo_path: Option<String>) -> Result<DiffPreview, String> {
-    let repo = repo::detect_repo_with_override(repo_path).map_err(|error| error.to_string())?;
-    preview::preview_action(&repo, &action)
+async fn preview_action(action: String, repo_path: Option<String>) -> Result<DiffPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo = repo::detect_repo_with_override(repo_path).map_err(|error| error.to_string())?;
+        preview::preview_action(&repo, &action)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

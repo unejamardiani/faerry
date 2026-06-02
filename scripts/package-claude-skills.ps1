@@ -6,6 +6,15 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $SkillsDir = Join-Path $RepoRoot "skills"
+$RuntimeSkillsDir = Join-Path $RepoRoot ".agents-manager/runtime/skills"
+$RuntimeSkillFiles = @()
+if (Test-Path -LiteralPath $RuntimeSkillsDir) {
+    $RuntimeSkillFiles = Get-ChildItem -LiteralPath $RuntimeSkillsDir -Directory |
+        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") }
+}
+if ($RuntimeSkillFiles.Count -gt 0) {
+    $SkillsDir = $RuntimeSkillsDir
+}
 $OutputDir = Join-Path $RepoRoot "dist/claude-desktop/skills"
 
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null

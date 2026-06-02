@@ -5,8 +5,9 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 SKILLS_DIR="$REPO_ROOT/skills"
-if [[ -d "$REPO_ROOT/.agents-manager/runtime/skills" ]]; then
-  SKILLS_DIR="$REPO_ROOT/.agents-manager/runtime/skills"
+RUNTIME_SKILLS_DIR="$REPO_ROOT/.agents-manager/runtime/skills"
+if [[ -d "$RUNTIME_SKILLS_DIR" ]] && [[ -n "$(find "$RUNTIME_SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md -print -quit)" ]]; then
+  SKILLS_DIR="$RUNTIME_SKILLS_DIR"
 fi
 OUTPUT_DIR="$REPO_ROOT/dist/claude-desktop/skills"
 
@@ -21,7 +22,7 @@ declare -a TARGETS=()
 package_is_current() {
   local package_name="$1"
   local skill_name
-  for skill_name in "${TARGETS[@]}"; do
+  for skill_name in ${TARGETS[@]+"${TARGETS[@]}"}; do
     if [[ "$package_name" == "$skill_name.zip" ]]; then
       return 0
     fi
@@ -43,6 +44,11 @@ else
       echo "Removed stale package $package_path"
     fi
   done < <(find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -type f -name '*.zip' -print | sort)
+fi
+
+if [[ "${#TARGETS[@]}" -eq 0 ]]; then
+  echo "No Claude Desktop skill packages to create."
+  exit 0
 fi
 
 for skill_name in "${TARGETS[@]}"; do
