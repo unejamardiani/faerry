@@ -131,7 +131,7 @@ function artifact(kind, target, includeChecksum) {
   const stat = fs.statSync(target);
   const item = {
     kind,
-    path: path.relative(appRoot, target),
+    path: path.relative(appRoot, target).replaceAll("\\", "/"),
     bytes: stat.isFile() ? stat.size : null,
   };
   if (includeChecksum && stat.isFile()) {

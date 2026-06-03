@@ -90,7 +90,8 @@ function selectSignatureArtifact(manifest, updateKind) {
 }
 
 function fileForArtifact(artifact) {
-  const file = filesByName.get(path.basename(artifact.path));
+  const normalized = artifact.path.replaceAll("\\", "/");
+  const file = filesByName.get(path.basename(normalized));
   if (!file) {
     fail(`Release asset not found for ${artifact.path}.`);
   }
