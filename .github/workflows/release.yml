@@ -101,11 +101,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: |
-            src-tauri/target/release/bundle/appimage/*
-            src-tauri/target/release/bundle/dmg/*
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig
+            src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/macos/*.app.tar.gz
             src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
-            src-tauri/target/release/bundle/nsis/*
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe.sig
             src-tauri/target/release/bundle/portable/*
             src-tauri/target/release/bundle/release/*
 
@@ -164,7 +166,14 @@ jobs:
             echo "Install Faerry with the setup artifact for your platform, or download the portable package if you do not want an installed app."
             echo
             echo "## Assets"
-            find release-assets -type f | sort | while read -r file; do
+            find release-assets -type f \
+              -not -path "*.AppDir/*" \
+              \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.app.tar.gz.sig" \
+                 -o -name "*.AppImage" -o -name "*.AppImage.sig" \
+                 -o -name "*.exe" -o -name "*.exe.sig" \
+                 -o -name "*_portable.*" -o -name "*.sha256" \
+                 -o -name "latest.json" -o -name "*_release.json" \) \
+              | sort | while read -r file; do
               echo "- $(basename "${file}")"
             done
             echo
@@ -180,7 +189,14 @@ jobs:
           DRAFT_RELEASE: ${{ inputs.draft || false }}
           PRERELEASE: ${{ inputs.prerelease || false }}
         run: |
-          mapfile -t assets < <(find release-assets -type f | sort)
+          mapfile -t assets < <(find release-assets -type f \
+            -not -path "*.AppDir/*" \
+            \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.app.tar.gz.sig" \
+               -o -name "*.AppImage" -o -name "*.AppImage.sig" \
+               -o -name "*.exe" -o -name "*.exe.sig" \
+               -o -name "*_portable.*" -o -name "*.sha256" \
+               -o -name "latest.json" -o -name "*_release.json" \) \
+            | sort)
 
           if [[ "${#assets[@]}" -eq 0 ]]; then
             echo "No release assets found." >&2

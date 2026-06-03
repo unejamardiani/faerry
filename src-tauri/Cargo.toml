@@ -1,6 +1,6 @@
 [package]
 name = "faerry"
-version = "0.1.0-alpha.11"
+version = "0.1.0-alpha.12"
 description = "Faerry - Portable Agents Manager"
 authors = ["Faerry contributors"]
 edition = "2021"
