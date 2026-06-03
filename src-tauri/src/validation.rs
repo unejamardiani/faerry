@@ -7,14 +7,46 @@ pub fn validate_repo(root: &str) -> RepoValidation {
     let path = Path::new(root);
     let mut issues = Vec::new();
 
-    // Required files
+    let has_workspace_signal = [
+        repo::FAERRY_CONFIG_FILENAME,
+        repo::LEGACY_SOURCES_FILENAME,
+        "AGENTS.md",
+        "skills",
+        "agents",
+        "commands",
+        "designs",
+        "DESIGN.md",
+        "mcp/servers.json",
+    ]
+    .iter()
+    .any(|entry| path.join(entry).exists());
+
+    if !has_workspace_signal {
+        issues.push(ValidationIssue {
+            code: "workspace-empty".into(),
+            severity: "error".into(),
+            path: repo::display_path(path),
+            message: "This folder does not contain Faerry workspace content yet.".into(),
+            suggestion: "Create faerry.json or add skills, agents, commands, designs, AGENTS.md, or mcp/servers.json.".into(),
+        });
+    }
+
+    validate_file(
+        &mut issues,
+        "faerry-json",
+        path,
+        repo::FAERRY_CONFIG_FILENAME,
+        "info",
+        false,
+        "faerry.json is the preferred workspace configuration file.",
+    );
     validate_file(
         &mut issues,
         "agents-md",
         path,
         "AGENTS.md",
         "info",
-        true,
+        false,
         "AGENTS.md is the root global instructions file.",
     );
     validate_dir(
@@ -22,8 +54,8 @@ pub fn validate_repo(root: &str) -> RepoValidation {
         "skills-dir",
         path,
         "skills",
-        "warning",
-        true,
+        "info",
+        false,
         "Skills directory provides reusable agent skills.",
     );
     validate_dir(
@@ -31,8 +63,8 @@ pub fn validate_repo(root: &str) -> RepoValidation {
         "commands-dir",
         path,
         "commands",
-        "warning",
-        true,
+        "info",
+        false,
         "Commands directory provides reusable agent prompts.",
     );
     validate_file(
@@ -40,8 +72,8 @@ pub fn validate_repo(root: &str) -> RepoValidation {
         "mcp-registry",
         path,
         "mcp/servers.json",
-        "error",
-        true,
+        "info",
+        false,
         "MCP registry is the source of truth for all tool MCP entries.",
     );
     validate_dir(

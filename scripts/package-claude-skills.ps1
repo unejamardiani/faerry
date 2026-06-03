@@ -17,6 +17,11 @@ if ($RuntimeSkillFiles.Count -gt 0) {
 }
 $OutputDir = Join-Path $RepoRoot "dist/claude-desktop/skills"
 
+if (-not (Test-Path -LiteralPath $SkillsDir)) {
+    Write-Host "No Claude Desktop skill packages to create."
+    exit 0
+}
+
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
 if ($SkillNames.Count -eq 0) {

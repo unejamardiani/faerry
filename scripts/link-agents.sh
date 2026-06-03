@@ -89,18 +89,24 @@ if [[ -z "$HOME_DIR" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$REPO_ROOT/AGENTS.md" || ! -d "$REPO_ROOT/skills" ]]; then
-  echo "Repo root does not match the expected .agents layout: $REPO_ROOT" >&2
+if [[ ! -f "$REPO_ROOT/faerry.json" && ! -f "$REPO_ROOT/sources.json" && ! -f "$REPO_ROOT/AGENTS.md" && ! -d "$REPO_ROOT/skills" && ! -d "$REPO_ROOT/agents" && ! -d "$REPO_ROOT/commands" && ! -d "$REPO_ROOT/designs" && ! -f "$REPO_ROOT/DESIGN.md" && ! -f "$REPO_ROOT/mcp/servers.json" ]]; then
+  echo "Folder does not look like a Faerry workspace: $REPO_ROOT" >&2
   exit 1
 fi
 
 prepare_skills_source() {
   SKILLS_SOURCE_DIR="$REPO_ROOT/skills"
+  local source_config=""
+  if [[ -f "$REPO_ROOT/faerry.json" ]]; then
+    source_config="$REPO_ROOT/faerry.json"
+  elif [[ -f "$REPO_ROOT/sources.json" ]]; then
+    source_config="$REPO_ROOT/sources.json"
+  fi
   local sync_source_script="$SCRIPT_DIR/sync-source-skills.mjs"
   if [[ ! -f "$sync_source_script" && -f "$REPO_ROOT/scripts/sync-source-skills.mjs" ]]; then
     sync_source_script="$REPO_ROOT/scripts/sync-source-skills.mjs"
   fi
-  if [[ -f "$REPO_ROOT/sources.json" && -f "$sync_source_script" ]]; then
+  if [[ -n "$source_config" && -f "$sync_source_script" ]]; then
     if command -v node >/dev/null 2>&1; then
       echo ""
       echo "Source skills"
@@ -111,8 +117,8 @@ prepare_skills_source() {
     else
       echo "  warning: node is missing; remote source skills were not aggregated." >&2
     fi
-  elif [[ -f "$REPO_ROOT/sources.json" ]]; then
-    echo "  warning: sources.json exists, but sync-source-skills.mjs was not found." >&2
+  elif [[ -n "$source_config" ]]; then
+    echo "  warning: source config exists, but sync-source-skills.mjs was not found." >&2
   fi
 }
 
@@ -190,32 +196,40 @@ install_shared_agents() {
   fi
 
   mkdir -p "$AGENTS_HOME"
-  link_path "$REPO_ROOT/AGENTS.md" "$AGENTS_HOME/AGENTS.md" "shared AGENTS.md"
-  link_path "$SKILLS_SOURCE_DIR" "$AGENTS_HOME/skills" "shared skills"
+  if [[ -f "$REPO_ROOT/AGENTS.md" ]]; then
+    link_path "$REPO_ROOT/AGENTS.md" "$AGENTS_HOME/AGENTS.md" "shared AGENTS.md"
+  else
+    echo "  skip shared AGENTS.md (not present)"
+  fi
+  if [[ -d "$SKILLS_SOURCE_DIR" ]]; then
+    link_path "$SKILLS_SOURCE_DIR" "$AGENTS_HOME/skills" "shared skills"
+  else
+    echo "  skip shared skills (not present)"
+  fi
 }
 
 install_claude() {
   [[ "$SKIP_CLAUDE" -eq 1 ]] && return
   echo ""
   echo "Claude Code"
-  link_path "$AGENTS_HOME/AGENTS.md" "$HOME_DIR/.claude/CLAUDE.md" "Claude global context"
-  link_path "$AGENTS_HOME/skills" "$HOME_DIR/.claude/skills" "Claude skills"
+  [[ -f "$AGENTS_HOME/AGENTS.md" ]] && link_path "$AGENTS_HOME/AGENTS.md" "$HOME_DIR/.claude/CLAUDE.md" "Claude global context" || echo "  skip Claude global context"
+  [[ -d "$AGENTS_HOME/skills" ]] && link_path "$AGENTS_HOME/skills" "$HOME_DIR/.claude/skills" "Claude skills" || echo "  skip Claude skills"
 }
 
 install_opencode() {
   [[ "$SKIP_OPENCODE" -eq 1 ]] && return
   echo ""
   echo "OpenCode"
-  link_path "$AGENTS_HOME/AGENTS.md" "$HOME_DIR/.config/opencode/AGENTS.md" "OpenCode global context"
-  link_path "$AGENTS_HOME/skills" "$HOME_DIR/.config/opencode/skills" "OpenCode skills"
+  [[ -f "$AGENTS_HOME/AGENTS.md" ]] && link_path "$AGENTS_HOME/AGENTS.md" "$HOME_DIR/.config/opencode/AGENTS.md" "OpenCode global context" || echo "  skip OpenCode global context"
+  [[ -d "$AGENTS_HOME/skills" ]] && link_path "$AGENTS_HOME/skills" "$HOME_DIR/.config/opencode/skills" "OpenCode skills" || echo "  skip OpenCode skills"
 }
 
 install_codex() {
   [[ "$SKIP_CODEX" -eq 1 ]] && return
   echo ""
   echo "Codex"
-  link_path "$AGENTS_HOME/AGENTS.md" "$CODEX_ROOT/AGENTS.md" "Codex global context"
-  link_path "$AGENTS_HOME/skills" "$CODEX_ROOT/skills" "Codex skills"
+  [[ -f "$AGENTS_HOME/AGENTS.md" ]] && link_path "$AGENTS_HOME/AGENTS.md" "$CODEX_ROOT/AGENTS.md" "Codex global context" || echo "  skip Codex global context"
+  [[ -d "$AGENTS_HOME/skills" ]] && link_path "$AGENTS_HOME/skills" "$CODEX_ROOT/skills" "Codex skills" || echo "  skip Codex skills"
 }
 
 install_copilot_env() {

@@ -58,10 +58,29 @@ type DesignItem = {
 };
 
 type ResourceSourceStatus = {
+  index: number;
   name: string;
   path: string;
+  url: string;
+  gitRef: string;
+  refresh: boolean;
   resolvedPath: string;
   enabled: boolean;
+  skills: boolean;
+  commands: boolean;
+  designs: boolean;
+  skillsPath: string;
+  commandsPath: string;
+  designsPath: string;
+  skillPaths: string[];
+  commandPaths: string[];
+  designPaths: string[];
+  includeSkills: string[];
+  excludeSkills: string[];
+  includeCommands: string[];
+  excludeCommands: string[];
+  includeDesigns: string[];
+  excludeDesigns: string[];
   resources: string[];
   status: string;
   message: string;
@@ -69,11 +88,45 @@ type ResourceSourceStatus = {
 
 type SourceConfigStatus = {
   path: string;
+  standardPath: string;
+  legacy: boolean;
   exists: boolean;
   valid: boolean;
   error?: string;
   sources: ResourceSourceStatus[];
   warnings: string[];
+};
+
+type SourceFormData = {
+  name: string;
+  path: string;
+  url: string;
+  gitRef: string;
+  refresh: boolean;
+  enabled: boolean;
+  skills: boolean;
+  commands: boolean;
+  designs: boolean;
+  skillsPath: string;
+  commandsPath: string;
+  designsPath: string;
+  skillPaths: string[];
+  commandPaths: string[];
+  designPaths: string[];
+  includeSkills: string[];
+  excludeSkills: string[];
+  includeCommands: string[];
+  excludeCommands: string[];
+  includeDesigns: string[];
+  excludeDesigns: string[];
+};
+
+type SourceConfigEditResult = {
+  ok: boolean;
+  message: string;
+  validationErrors: string[];
+  diff: string;
+  path: string;
 };
 
 type McpServer = {
@@ -313,7 +366,7 @@ type SelectiveSyncPlan = {
   warnings: string[];
 };
 
-const views = ["Sync", "Sources", "Resources", "Advanced"] as const;
+const views = ["Home", "Sources", "Resources", "Settings"] as const;
 type View = (typeof views)[number];
 
 type ResourceTab = "skills" | "commands" | "mcps" | "designs";
@@ -349,7 +402,7 @@ const repoPathStorageKey = "faerry.repoPath";
 
 function App() {
   const [state, setState] = useState<AppState | null>(null);
-  const [view, setView] = useState<View>("Sync");
+  const [view, setView] = useState<View>("Home");
   const [plan, setPlan] = useState<ScriptPlan | null>(null);
   const [preview, setPreview] = useState<DiffPreview | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -444,7 +497,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (runningAction || view !== "Sync") return;
+    if (runningAction || view !== "Home") return;
     const timer = window.setInterval(() => refresh(repoPath, { silent: true }), 8000);
     return () => window.clearInterval(timer);
   }, [repoPath, runningAction, view]);
@@ -527,6 +580,22 @@ function App() {
     setMeta("Using automatic repo detection.");
   }
 
+  async function prepareWorkspace() {
+    if (!repoPath) {
+      await chooseRepo();
+      return;
+    }
+    try {
+      const result = await invoke<CreateResult>("prepare_workspace", { repoPath });
+      setMeta(result.message);
+      setOutput(result.path || result.message);
+      await refresh(repoPath, { force: true });
+    } catch (error) {
+      setMeta("Workspace setup failed.");
+      setOutput(String(error));
+    }
+  }
+
   async function runRepoImport(source: string, destination: string, branch?: string, shallow?: boolean) {
     setImportOpen(false);
     setMeta("Importing repo...");
@@ -603,7 +672,7 @@ function App() {
     <div className="appShell">
       <header className="appHeader">
         <div className="brand">
-          <div className="brandMark">F</div>
+          <div className="brandMark" aria-hidden="true"><span /></div>
           <div>
             <h1>Faerry</h1>
             <p>Carry your agent setup across tools</p>
@@ -622,14 +691,16 @@ function App() {
         {!state?.repo ? (
           <RepoSetup
             error={state?.repoError}
+            repoPath={repoPath}
             loading={loading}
             onChooseRepo={chooseRepo}
             onImport={() => setImportOpen(true)}
+            onPrepare={prepareWorkspace}
             onRefresh={() => refresh()}
           />
         ) : (
           <>
-            {view === "Sync" && (
+            {view === "Home" && (
               <SyncHome
                 state={state}
                 summary={syncSummary}
@@ -661,10 +732,12 @@ function App() {
                 onRefresh={() => refresh()}
                 openPath={openPath}
                 copyText={copyText}
+                setMeta={setMeta}
+                setOutput={setOutput}
               />
             )}
             {view === "Resources" && <ResourcesView state={state} onAction={reviewAction} openPath={openPath} copyText={copyText} />}
-            {view === "Advanced" && (
+            {view === "Settings" && (
               <AdvancedView
                 state={state}
                 effectiveRepoPath={effectiveRepoPath}
@@ -723,26 +796,31 @@ function App() {
 
 function RepoSetup({
   error,
+  repoPath,
   loading,
   onChooseRepo,
   onImport,
+  onPrepare,
   onRefresh,
 }: {
   error?: string;
+  repoPath: string;
   loading: boolean;
   onChooseRepo: () => void;
   onImport: () => void;
-  onRefresh: () => void;
+  onPrepare: () => void;
+  onRefresh: () => void | Promise<void>;
 }) {
   return (
     <section className="emptyState">
       <div className="statusDot danger" />
       <div>
-        <h2>No agents repository selected</h2>
-        <p>{error ?? "Choose or import a portable agents repo to start syncing."}</p>
+        <h2>No workspace selected</h2>
+        <p>{error ?? "Choose, prepare, or import a folder to start managing agent content."}</p>
       </div>
       <div className="buttonRow">
         <button className="primaryButton" onClick={onChooseRepo}>Choose folder</button>
+        {repoPath && <button className="ghostButton" onClick={onPrepare}>Prepare folder</button>}
         <button className="ghostButton" onClick={onImport}>Clone or import</button>
         <button className="ghostButton" onClick={onRefresh} disabled={loading}>{loading ? "Checking..." : "Refresh"}</button>
       </div>
@@ -825,7 +903,7 @@ function SyncHome({
 
       <Panel title="Current checks" subtitle={`${summary.counts.synced} synced, ${summary.counts.outOfSync} not in sync, ${summary.counts.attention} need attention.`}>
         {summary.items.length === 0 ? (
-          <div className="empty">No managed checks found for this repository.</div>
+          <div className="empty">No managed checks found for this workspace.</div>
         ) : (
           <>
             <div className="checkList compact">
@@ -870,7 +948,7 @@ function SyncHome({
                 <PreviewSectionCard key={`${section.title}-${section.path}`} section={section} defaultOpen={section.status === "error"} />
               ))
             ) : (
-              <div className="empty">No changes found. The managed targets already match the selected repository.</div>
+              <div className="empty">No changes found. The managed targets already match the selected workspace.</div>
             )}
             {unchangedSections.length > 0 && (
               <details className="inlineDetails">
@@ -910,6 +988,8 @@ function SourcesView({
   onRefresh,
   openPath,
   copyText,
+  setMeta,
+  setOutput,
 }: {
   state: AppState;
   repoPath: string;
@@ -920,14 +1000,68 @@ function SourcesView({
   onRefresh: () => void;
   openPath: (path: string) => void;
   copyText: (text: string) => void;
+  setMeta: (value: string) => void;
+  setOutput: (value: string) => void;
 }) {
   const sourceConfig = state.sourceConfig;
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingInitial, setEditingInitial] = useState<SourceFormData | null>(null);
+  const [sourceResult, setSourceResult] = useState<SourceConfigEditResult | null>(null);
+  const configPath = sourceConfig.exists ? sourceConfig.path : sourceConfig.standardPath;
+
+  async function applySourceAction(action: string, index?: number, data?: SourceFormData) {
+    try {
+      const result = await invoke<SourceConfigEditResult>("edit_source_config", {
+        repoPath: state.repo?.root ?? (repoPath || null),
+        action,
+        index: index ?? null,
+        data: data ?? null,
+      });
+      setSourceResult(result);
+      setMeta(result.message);
+      setOutput(result.diff || result.message);
+      if (result.ok) {
+        setEditingIndex(null);
+        setEditingInitial(null);
+        await onRefresh();
+      }
+    } catch (error) {
+      setMeta("Could not update sources.");
+      setOutput(String(error));
+    }
+  }
+
+  async function migrateConfig() {
+    try {
+      const result = await invoke<SourceConfigEditResult>("migrate_sources_json", { repoPath: state.repo?.root ?? (repoPath || null) });
+      setSourceResult(result);
+      setMeta(result.message);
+      setOutput(result.diff || result.message);
+      if (result.ok) await onRefresh();
+    } catch (error) {
+      setMeta("Migration failed.");
+      setOutput(String(error));
+    }
+  }
+
+  function startAdd() {
+    setEditingIndex(null);
+    setEditingInitial(emptySourceForm());
+    setSourceResult(null);
+  }
+
+  function startEdit(source: ResourceSourceStatus) {
+    setEditingIndex(source.index);
+    setEditingInitial(sourceToForm(source));
+    setSourceResult(null);
+  }
+
   return (
     <>
-      <Panel title="Repository" subtitle={repoPath ? "Selected manually" : "Auto-detected"}>
+      <Panel title="Workspace" subtitle={repoPath ? "Selected manually" : "Auto-detected"}>
         <div className="repoSummary">
           <div>
-            <div className="eyebrow">Source of truth</div>
+            <div className="eyebrow">Current folder</div>
             <div className="repoPath">{state.repo?.root}</div>
           </div>
           <div className="buttonRow">
@@ -941,22 +1075,49 @@ function SourcesView({
       </Panel>
 
       <Panel
-        title="Source config"
-        subtitle={sourceConfig.exists ? sourceConfig.path : "No sources.json configured."}
+        title="Sources"
+        subtitle={sourceConfig.exists ? configPath : "Add sources to load content from other folders or Git repositories."}
       >
         <div className="sourceConfigHeader">
-          <StatusPill value={!sourceConfig.exists ? "not-configured" : sourceConfig.valid ? "valid" : "invalid"} />
+          <div className="structuredSummary">
+            <StatusPill value={!sourceConfig.exists ? "not-configured" : sourceConfig.valid ? "valid" : "invalid"} />
+            {sourceConfig.legacy && <StatusPill value="legacy" />}
+          </div>
           <div className="buttonRow compact">
-            {sourceConfig.exists && <button className="smallButton" onClick={() => openPath(sourceConfig.path)}>Open sources.json</button>}
-            {sourceConfig.exists && <button className="smallButton" onClick={() => copyText(sourceConfig.path)}>Copy path</button>}
+            <button className="primaryButton" onClick={startAdd}>Add source</button>
+            {sourceConfig.legacy && <button className="ghostButton" onClick={migrateConfig}>Use faerry.json</button>}
+            {configPath && <button className="smallButton" onClick={() => openPath(configPath)}>Open config</button>}
+            {configPath && <button className="smallButton" onClick={() => copyText(configPath)}>Copy path</button>}
           </div>
         </div>
+        {sourceConfig.legacy && (
+          <div className="warningItem">
+            This workspace still uses sources.json. Faerry can keep reading it, or create faerry.json for future edits.
+          </div>
+        )}
+        {sourceResult && !sourceResult.ok && (
+          <div className="errorBox">
+            <strong>{sourceResult.message}</strong>
+            {sourceResult.validationErrors.map((error) => <div key={error}>{error}</div>)}
+          </div>
+        )}
+        {editingInitial && (
+          <SourceEditor
+            initial={editingInitial}
+            submitLabel={editingIndex === null ? "Save source" : "Save changes"}
+            onCancel={() => {
+              setEditingIndex(null);
+              setEditingInitial(null);
+            }}
+            onSubmit={(data) => applySourceAction(editingIndex === null ? "add" : "edit", editingIndex ?? undefined, data)}
+          />
+        )}
         {!sourceConfig.exists ? (
-          <div className="empty">This repo uses only its local skills, commands, designs, and MCP registry.</div>
+          <div className="empty">No extra sources configured yet. Add a source to bring in skills, commands, or designs from another folder or Git repository.</div>
         ) : !sourceConfig.valid ? (
           <div className="errorBox">{sourceConfig.error}</div>
         ) : sourceConfig.sources.length === 0 ? (
-          <div className="empty">sources.json exists but does not list any sources.</div>
+          <div className="empty">The config exists but does not list any sources yet.</div>
         ) : (
           <div className="sourceList">
             {sourceConfig.sources.map((source) => (
@@ -969,10 +1130,15 @@ function SourcesView({
                   <StatusPill value={source.enabled ? source.status : "disabled"} />
                 </summary>
                 <div className="sourceDetails">
-                  <Field label="Configured path or URL"><div className="path">{source.path || "n/a"}</div></Field>
-                  <Field label="Resolved path"><div className="path">{source.resolvedPath || "n/a"}</div></Field>
+                  <Field label="Location"><div className="path">{source.url || source.path || "n/a"}</div></Field>
+                  {source.resolvedPath && <Field label="Resolved folder"><div className="path">{source.resolvedPath}</div></Field>}
                   <Field label="Message">{source.message}</Field>
                   <div className="buttonRow compact">
+                    <button className="smallButton" onClick={() => applySourceAction("toggle", source.index)}>
+                      {source.enabled ? "Disable" : "Enable"}
+                    </button>
+                    <button className="smallButton" onClick={() => startEdit(source)}>Edit</button>
+                    <button className="smallButton" onClick={() => applySourceAction("delete", source.index)}>Remove</button>
                     {source.resolvedPath && <button className="smallButton" onClick={() => openPath(source.resolvedPath)}>Open source</button>}
                     {source.resolvedPath && <button className="smallButton" onClick={() => copyText(source.resolvedPath)}>Copy resolved path</button>}
                   </div>
@@ -994,6 +1160,149 @@ function SourcesView({
       )}
     </>
   );
+}
+
+function SourceEditor({
+  initial,
+  submitLabel,
+  onCancel,
+  onSubmit,
+}: {
+  initial: SourceFormData;
+  submitLabel: string;
+  onCancel: () => void;
+  onSubmit: (data: SourceFormData) => void;
+}) {
+  const [form, setForm] = useState<SourceFormData>(initial);
+  const [mode, setMode] = useState(initial.url ? "git" : "local");
+
+  function update(next: Partial<SourceFormData>) {
+    setForm((current) => ({ ...current, ...next }));
+  }
+
+  function submit() {
+    onSubmit({
+      ...form,
+      path: mode === "local" ? form.path : "",
+      url: mode === "git" ? form.url : "",
+    });
+  }
+
+  return (
+    <div className="sourceEditor">
+      <div className="sourceMode">
+        <button className={mode === "local" ? "primaryButton" : "ghostButton"} onClick={() => setMode("local")}>Local folder</button>
+        <button className={mode === "git" ? "primaryButton" : "ghostButton"} onClick={() => setMode("git")}>Git repository</button>
+      </div>
+      <div className="sourceEditorGrid">
+        <Field label="Name">
+          <input className="textInput" value={form.name} onChange={(event) => update({ name: event.target.value })} placeholder="Design system, Team skills, Personal agents" />
+        </Field>
+        {mode === "local" ? (
+          <Field label="Folder path">
+            <input className="textInput" value={form.path} onChange={(event) => update({ path: event.target.value })} placeholder="../agents-adesso or ~/Code/team-agents" />
+          </Field>
+        ) : (
+          <Field label="Git URL">
+            <input className="textInput" value={form.url} onChange={(event) => update({ url: event.target.value })} placeholder="https://github.com/org/repo.git" />
+          </Field>
+        )}
+        {mode === "git" && (
+          <Field label="Branch or tag">
+            <input className="textInput" value={form.gitRef} onChange={(event) => update({ gitRef: event.target.value })} placeholder="main, v1.0.0, or leave empty" />
+          </Field>
+        )}
+      </div>
+      <div className="sourceToggleGrid">
+        <label><input type="checkbox" checked={form.enabled} onChange={(event) => update({ enabled: event.target.checked })} /> Active</label>
+        <label><input type="checkbox" checked={form.skills} onChange={(event) => update({ skills: event.target.checked })} /> Skills</label>
+        <label><input type="checkbox" checked={form.commands} onChange={(event) => update({ commands: event.target.checked })} /> Commands</label>
+        <label><input type="checkbox" checked={form.designs} onChange={(event) => update({ designs: event.target.checked })} /> Designs</label>
+        {mode === "git" && <label><input type="checkbox" checked={form.refresh} onChange={(event) => update({ refresh: event.target.checked })} /> Refresh on scan</label>}
+      </div>
+      <details className="inlineDetails">
+        <summary>Advanced filters and paths</summary>
+        <div className="sourceEditorGrid padded">
+          <Field label="Skills folder"><input className="textInput" value={form.skillsPath} onChange={(event) => update({ skillsPath: event.target.value })} placeholder="skills" /></Field>
+          <Field label="Commands folder"><input className="textInput" value={form.commandsPath} onChange={(event) => update({ commandsPath: event.target.value })} placeholder="commands" /></Field>
+          <Field label="Designs folder"><input className="textInput" value={form.designsPath} onChange={(event) => update({ designsPath: event.target.value })} placeholder="designs" /></Field>
+          <Field label="Include skills"><textarea className="textArea compactArea" value={linesToText(form.includeSkills)} onChange={(event) => update({ includeSkills: parseLines(event.target.value) })} placeholder="taste-*\nplanner" /></Field>
+          <Field label="Exclude skills"><textarea className="textArea compactArea" value={linesToText(form.excludeSkills)} onChange={(event) => update({ excludeSkills: parseLines(event.target.value) })} placeholder="draft-*" /></Field>
+          <Field label="Include commands"><textarea className="textArea compactArea" value={linesToText(form.includeCommands)} onChange={(event) => update({ includeCommands: parseLines(event.target.value) })} /></Field>
+          <Field label="Exclude commands"><textarea className="textArea compactArea" value={linesToText(form.excludeCommands)} onChange={(event) => update({ excludeCommands: parseLines(event.target.value) })} /></Field>
+          <Field label="Include designs"><textarea className="textArea compactArea" value={linesToText(form.includeDesigns)} onChange={(event) => update({ includeDesigns: parseLines(event.target.value) })} /></Field>
+          <Field label="Exclude designs"><textarea className="textArea compactArea" value={linesToText(form.excludeDesigns)} onChange={(event) => update({ excludeDesigns: parseLines(event.target.value) })} /></Field>
+        </div>
+      </details>
+      <div className="buttonRow padded compact">
+        <button className="ghostButton" onClick={onCancel}>Cancel</button>
+        <button className="primaryButton" onClick={submit}>{submitLabel}</button>
+      </div>
+    </div>
+  );
+}
+
+function emptySourceForm(): SourceFormData {
+  return {
+    name: "",
+    path: "",
+    url: "",
+    gitRef: "",
+    refresh: false,
+    enabled: true,
+    skills: true,
+    commands: true,
+    designs: false,
+    skillsPath: "",
+    commandsPath: "",
+    designsPath: "",
+    skillPaths: [],
+    commandPaths: [],
+    designPaths: [],
+    includeSkills: [],
+    excludeSkills: [],
+    includeCommands: [],
+    excludeCommands: [],
+    includeDesigns: [],
+    excludeDesigns: [],
+  };
+}
+
+function sourceToForm(source: ResourceSourceStatus): SourceFormData {
+  return {
+    name: source.name,
+    path: source.url ? "" : source.path,
+    url: source.url,
+    gitRef: source.gitRef,
+    refresh: source.refresh,
+    enabled: source.enabled,
+    skills: source.skills,
+    commands: source.commands,
+    designs: source.designs,
+    skillsPath: source.skillsPath,
+    commandsPath: source.commandsPath,
+    designsPath: source.designsPath,
+    skillPaths: source.skillPaths,
+    commandPaths: source.commandPaths,
+    designPaths: source.designPaths,
+    includeSkills: source.includeSkills,
+    excludeSkills: source.excludeSkills,
+    includeCommands: source.includeCommands,
+    excludeCommands: source.excludeCommands,
+    includeDesigns: source.includeDesigns,
+    excludeDesigns: source.excludeDesigns,
+  };
+}
+
+function parseLines(value: string) {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function linesToText(values: string[]) {
+  return values.join("\n");
 }
 
 function ResourcesView({
@@ -1137,7 +1446,7 @@ function AdvancedView({
       <AdvancedSection title="Tool paths" subtitle="Detected target paths and narrow tool sync actions.">
         <Tools state={state} onAction={onAction} openPath={openPath} />
       </AdvancedSection>
-      <AdvancedSection title="Validation" subtitle="Run deeper repository checks.">
+      <AdvancedSection title="Validation" subtitle="Run deeper workspace checks.">
         <Validation onValidate={onValidate} repoValidation={repoValidation} validating={validating} />
       </AdvancedSection>
       <AdvancedSection title="Logs" subtitle="Recent sync command logs." onOpen={onRefreshLogs}>
@@ -1890,7 +2199,7 @@ function Mcps({
 function Tools({ state, onAction, openPath }: { state: AppState; onAction: (action: string) => void; openPath: (path: string) => void }) {
   return (
     <>
-      <Panel title="Detected Tool Paths" subtitle="The GUI inspects these paths read-only. Apply actions are delegated to repo scripts.">
+      <Panel title="Detected Tool Paths" subtitle="The GUI inspects these paths read-only. Apply actions are delegated to workspace scripts.">
         <table>
           <thead>
             <tr>
@@ -2053,13 +2362,13 @@ function About({
             <div>
               <Field label="App Version">{runtimeInfo.appVersion}</Field>
               <Field label="Platform">{runtimeInfo.platform} ({runtimeInfo.platformArch})</Field>
-              <Field label="Repo Mode">
+              <Field label="Workspace Mode">
                 <StatusPill value={runtimeInfo.repoMode} />
               </Field>
               <Field label="Script Family">{runtimeInfo.scriptFamily}</Field>
             </div>
             <div>
-              <Field label="Repo Root"><div className="path">{runtimeInfo.repoRoot}</div></Field>
+              <Field label="Workspace Root"><div className="path">{runtimeInfo.repoRoot}</div></Field>
               <Field label="AGENTS.md">
                 {runtimeInfo.agentsMdExists
                   ? `${runtimeInfo.agentsMdSize} bytes, modified ${runtimeInfo.agentsMdModified}`
@@ -2119,7 +2428,7 @@ function About({
       </Panel>
 
       {scriptVersions.length > 0 && (
-        <Panel title="Script Versions" subtitle={runtimeInfo?.repoHasLocalScripts ? "Repo scripts present — compared against bundled copies." : "No repo scripts; showing bundled versions only."}>
+        <Panel title="Script Versions" subtitle={runtimeInfo?.repoHasLocalScripts ? "Workspace scripts present — compared against bundled copies." : "No workspace scripts; showing bundled versions only."}>
           <table>
             <thead>
               <tr>
@@ -2142,52 +2451,6 @@ function About({
               ))}
             </tbody>
           </table>
-        </Panel>
-      )}
-
-      <Panel title="Resource Sources" subtitle={sourceConfig.exists ? sourceConfig.path : "No sources.json configured."}>
-        {!sourceConfig.exists ? (
-          <div className="empty">Create sources.json in the repo root to load skills and commands from other local source checkouts.</div>
-        ) : !sourceConfig.valid ? (
-          <div className="errorBox">{sourceConfig.error}</div>
-        ) : sourceConfig.sources.length === 0 ? (
-          <div className="empty">sources.json exists but does not list any sources.</div>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Status</th>
-                <th>Resources</th>
-                <th>Path</th>
-                <th>Message</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sourceConfig.sources.map((source) => (
-                <tr key={`${source.name}-${source.resolvedPath}`}>
-                  <td>{source.name}</td>
-                  <td><StatusPill value={source.status} /></td>
-                  <td>{source.resources.join(", ") || "none"}</td>
-                  <td>
-                    <button className="smallButton" onClick={() => copyText(source.resolvedPath)}>Copy</button>
-                    <div className="path">{source.resolvedPath}</div>
-                  </td>
-                  <td>{source.message}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Panel>
-
-      {sourceConfig.warnings.length > 0 && (
-        <Panel title="Source Warnings" subtitle="Non-fatal issues while merging configured sources.">
-          <ul className="warningList">
-            {sourceConfig.warnings.map((warning) => (
-              <li key={warning} className="warningItem">{warning}</li>
-            ))}
-          </ul>
         </Panel>
       )}
 
@@ -2258,7 +2521,7 @@ function Validation({
 
   return (
     <>
-      <Panel title="AGENTS.md & Repo Validation" subtitle="Runs deep checks on the AGENTS.md file and repo configuration.">
+      <Panel title="Workspace Validation" subtitle="Runs checks on the workspace configuration and optional AGENTS.md file.">
         <div className="buttonRow padded compact">
           <button className="primaryButton" onClick={onValidate} disabled={validating}>
             {validating ? "Validating..." : "Run Validation"}
@@ -2278,7 +2541,7 @@ function Validation({
 
       {issues.length === 0 && !validating ? (
         <Panel title="Results" subtitle="No issues found or validation not yet run.">
-          <div className="empty">Click "Run Validation" to check the repository.</div>
+          <div className="empty">Click "Run Validation" to check the workspace.</div>
         </Panel>
       ) : (
         Object.entries(bySeverity).map(([severity, sevIssues]) =>
@@ -2336,7 +2599,7 @@ function Logs({ logs, onClear, onRefresh }: { logs: LogEntry[]; onClear: () => v
                 {entry.exitCode !== undefined && <span className="path">exit: {entry.exitCode}</span>}
               </summary>
               <div className="logBody">
-                <Field label="Repo Path"><div className="path">{entry.repoPath || "—"}</div></Field>
+              <Field label="Workspace Path"><div className="path">{entry.repoPath || "—"}</div></Field>
                 <Field label="Command"><code>{entry.command}</code></Field>
                 {entry.backups.length > 0 && (
                   <Field label="Backups">
@@ -2865,7 +3128,7 @@ function ImportDialog({
         <div className="panelHeader">
           <div>
             <div className="eyebrow">Clone or import</div>
-            <h2>Import Agents Repo</h2>
+            <h2>Import Workspace</h2>
             <p>Supports Git URLs, ZIP URLs, and local ZIP files.</p>
           </div>
         </div>
@@ -3032,7 +3295,7 @@ function deriveSyncSummary(state: AppState | null, loading: boolean, structuredO
     return {
       state: loading || runningAction ? "checking" : "needsAttention",
       label: loading || runningAction ? "Checking" : "Needs attention",
-      description: runningAction ? `${labelize(runningAction)} is still running.` : state?.repoError ?? "No agents repository is currently available.",
+      description: runningAction ? `${labelize(runningAction)} is still running.` : state?.repoError ?? "No Faerry workspace is currently available.",
       tone: loading || runningAction ? "checking" : "danger",
       items: [],
       counts: { synced: 0, outOfSync: 0, attention: loading || runningAction ? 0 : 1 },
@@ -3047,7 +3310,7 @@ function deriveSyncSummary(state: AppState | null, loading: boolean, structuredO
   addItem("MCP registry", state.registry.valid ? "valid" : "invalid", state.registry.error);
 
   if (!state.sourceConfig.exists) {
-    addItem("Source config", "not-configured", "Using only the selected repository.");
+    addItem("Source config", "not-configured", "Using only the selected workspace.");
   } else {
     addItem("Source config", state.sourceConfig.valid ? "valid" : "invalid", state.sourceConfig.error);
     for (const source of state.sourceConfig.sources) {
@@ -3114,7 +3377,7 @@ function deriveSyncSummary(state: AppState | null, loading: boolean, structuredO
     return {
       state: runningAction ? "checking" : "notInSync",
       label: runningAction ? "Sync running" : "Not in sync",
-      description: runningAction ? `${labelize(runningAction)} is running. Background refresh is paused until it finishes.` : summaryReason("One or more managed targets differ from the selected repository.", firstOutOfSync),
+    description: runningAction ? `${labelize(runningAction)} is running. Background refresh is paused until it finishes.` : summaryReason("One or more managed targets differ from the selected workspace.", firstOutOfSync),
       tone: runningAction ? "checking" : "warn",
       items,
       counts,
@@ -3124,7 +3387,7 @@ function deriveSyncSummary(state: AppState | null, loading: boolean, structuredO
   return {
     state: runningAction ? "checking" : "inSync",
     label: runningAction ? "Sync running" : "In sync",
-    description: runningAction ? `${labelize(runningAction)} is running. Background refresh is paused until it finishes.` : "Managed tools match the selected repository.",
+    description: runningAction ? `${labelize(runningAction)} is running. Background refresh is paused until it finishes.` : "Managed tools match the selected workspace.",
     tone: runningAction ? "checking" : "ok",
     items,
     counts,

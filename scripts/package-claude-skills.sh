@@ -16,6 +16,11 @@ if ! command -v zip >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ ! -d "$SKILLS_DIR" ]]; then
+  echo "No Claude Desktop skill packages to create."
+  exit 0
+fi
+
 mkdir -p "$OUTPUT_DIR"
 
 declare -a TARGETS=()

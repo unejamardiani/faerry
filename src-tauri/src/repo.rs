@@ -9,6 +9,9 @@ use std::{
 #[derive(Debug)]
 pub struct RepoError(String);
 
+pub const FAERRY_CONFIG_FILENAME: &str = "faerry.json";
+pub const LEGACY_SOURCES_FILENAME: &str = "sources.json";
+
 impl fmt::Display for RepoError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -27,7 +30,7 @@ pub fn detect_repo_with_override(repo_override: Option<String>) -> Result<Agents
                 return Ok(make_repo(resolved, home));
             }
             return Err(RepoError(format!(
-                "Selected path is not a portable agents repo: {}",
+                "Selected folder is not a Faerry workspace: {}",
                 display_path(resolved)
             )));
         }
@@ -58,7 +61,7 @@ pub fn detect_repo_with_override(repo_override: Option<String>) -> Result<Agents
         return Ok(make_repo(home_repo, home));
     }
 
-    Err(RepoError("No portable agents repo found. Set AGENTS_REPO or run from inside a repo containing AGENTS.md, skills, commands, and mcp/servers.json.".into()))
+    Err(RepoError("No Faerry workspace found. Choose a folder containing faerry.json, sources.json, AGENTS.md, skills, agents, commands, designs, DESIGN.md, or mcp/servers.json.".into()))
 }
 
 pub fn read_text(path: impl AsRef<Path>) -> Option<String> {
@@ -165,6 +168,29 @@ pub fn is_agents_repo(candidate: impl AsRef<Path>) -> bool {
     is_repo(candidate.as_ref())
 }
 
+pub fn source_config_path(root: impl AsRef<Path>) -> PathBuf {
+    let root = root.as_ref();
+    let standard = root.join(FAERRY_CONFIG_FILENAME);
+    if standard.exists() {
+        return standard;
+    }
+    let legacy = root.join(LEGACY_SOURCES_FILENAME);
+    if legacy.exists() {
+        return legacy;
+    }
+    standard
+}
+
+pub fn standard_source_config_path(root: impl AsRef<Path>) -> PathBuf {
+    root.as_ref().join(FAERRY_CONFIG_FILENAME)
+}
+
+pub fn is_legacy_source_config(path: impl AsRef<Path>) -> bool {
+    path.as_ref()
+        .file_name()
+        .is_some_and(|name| name == LEGACY_SOURCES_FILENAME)
+}
+
 fn home_dir() -> Option<PathBuf> {
     if cfg!(windows) {
         env::var_os("USERPROFILE").map(PathBuf::from)
@@ -197,9 +223,22 @@ fn expand_home(value: &str, home: &Path) -> PathBuf {
 }
 
 fn is_repo(candidate: &Path) -> bool {
-    ["AGENTS.md", "skills", "mcp/servers.json"]
-        .iter()
-        .all(|entry| candidate.join(entry).exists())
+    if !candidate.is_dir() {
+        return false;
+    }
+    [
+        FAERRY_CONFIG_FILENAME,
+        LEGACY_SOURCES_FILENAME,
+        "AGENTS.md",
+        "skills",
+        "agents",
+        "commands",
+        "designs",
+        "DESIGN.md",
+        "mcp/servers.json",
+    ]
+    .iter()
+    .any(|entry| candidate.join(entry).exists())
 }
 
 fn make_repo(root: PathBuf, home: PathBuf) -> AgentsRepo {
@@ -232,4 +271,52 @@ pub fn display_path(path: impl AsRef<Path>) -> String {
 
 fn normalize(path: PathBuf) -> PathBuf {
     path.canonicalize().unwrap_or(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn faerry_json_only_is_workspace() {
+        let root = temp_path("faerry-json-only");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(FAERRY_CONFIG_FILENAME), r#"{"sources":[]}"#).unwrap();
+
+        assert!(is_agents_repo(&root));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn skills_only_is_workspace() {
+        let root = temp_path("skills-only");
+        fs::create_dir_all(root.join("skills")).unwrap();
+
+        assert!(is_agents_repo(&root));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn empty_folder_is_not_workspace() {
+        let root = temp_path("empty");
+        fs::create_dir_all(&root).unwrap();
+
+        assert!(!is_agents_repo(&root));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_path(label: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("faerry-repo-test-{label}-{suffix}"))
+    }
 }

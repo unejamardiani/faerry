@@ -22,7 +22,9 @@ for (let i = 0; i < args.length; i += 1) {
   }
 }
 
-const sourcesPath = path.join(repoRoot, "sources.json");
+const faerryConfigPath = path.join(repoRoot, "faerry.json");
+const legacySourcesPath = path.join(repoRoot, "sources.json");
+const sourcesPath = fs.existsSync(faerryConfigPath) ? faerryConfigPath : legacySourcesPath;
 const localSkillsDir = path.join(repoRoot, "skills");
 const cacheRoot = path.join(repoRoot, ".agents-manager", "source-cache");
 const runtimeRoot = path.join(repoRoot, ".agents-manager", "runtime");
@@ -32,7 +34,8 @@ function usage() {
   console.log(`Usage: sync-source-skills.mjs [options]
 
 Builds a generated aggregate skills directory from repo-local skills and enabled
-skill sources in sources.json.
+skill sources in faerry.json. Legacy sources.json is still read when faerry.json
+does not exist.
 
 Options:
   --repo-root PATH  Portable agents repo root. Defaults to parent of scripts/.

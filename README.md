@@ -1,10 +1,10 @@
 # Faerry
 
-Faerry is a desktop app for carrying a portable `.agents` setup across agent
-tools. It keeps one repository as the source of truth for global instructions,
-skills, MCP servers, and optional source repositories, then links or syncs that
-setup into tools such as Claude Code, Codex, OpenCode, GitHub Copilot CLI, and
-Claude Desktop skill packages.
+Faerry is a desktop app for carrying agent configuration across tools. It keeps
+one workspace as the source of truth for instructions, skills, MCP servers, and
+optional source repositories, then links or syncs that setup into tools such as
+Claude Code, Codex, OpenCode, GitHub Copilot CLI, and Claude Desktop skill
+packages.
 
 Faerry combines the practical idea of a ferry with a small hint of faery-like
 magic. The "ae" spelling is a personal signature, while the product remains a
@@ -13,31 +13,34 @@ general-purpose portable agents manager.
 ## Status
 
 Faerry is early software. The app currently focuses on local desktop workflows
-for a portable `.agents` repository:
+for Faerry-compatible workspaces:
 
-- inspect repo health, skills, designs, MCP registries, and source repos
+- inspect workspace health, skills, designs, MCP registries, and source repos
 - preview link and MCP changes before applying them
 - link `~/.agents` into supported CLI agent tools
-- aggregate skills from local or Git sources through `sources.json`
+- manage local or Git sources from the UI through `faerry.json`
 - package Claude Desktop skill ZIPs
-- import portable agents repos from Git URLs, ZIP URLs, or local ZIP files
+- import workspaces from Git URLs, ZIP URLs, or local ZIP files
 
-## Portable Agents Repo Contract
+## Faerry Workspace Contract
 
-Faerry manages a repository with this shape:
+Faerry accepts a folder as a workspace when it contains at least one useful
+agent-management signal:
 
 ```text
 .
-├── AGENTS.md
-├── skills/
-├── mcp/
-│   └── servers.json
-└── sources.json       # optional
+├── faerry.json        # preferred config for sources
+├── AGENTS.md          # optional global instructions
+├── skills/            # optional local skills
+├── agents/            # optional agent definitions
+├── commands/          # optional commands
+├── designs/ or DESIGN.md
+└── mcp/servers.json   # optional MCP registry
 ```
 
-`AGENTS.md` and `skills/` are required. `mcp/servers.json` is required for MCP
-sync. `sources.json` is optional and lets a home repo load skills, commands, and
-`DESIGN.md` files from other local or Git repositories.
+`skills/` is no longer required. A source-only workspace with just `faerry.json`
+is valid. Legacy `sources.json` files are still read, but new UI edits write
+`faerry.json`.
 
 Generated source caches and aggregate skills live under `.agents-manager/` in
 the managed repo. That folder is runtime state and should not be committed.
@@ -82,7 +85,7 @@ npm run package:portable
 
 ## Bundled Scripts
 
-Faerry bundles generic sync scripts so the selected portable agents repo does
+Faerry bundles generic sync scripts so the selected workspace does
 not need to carry its own script copies for app-driven actions.
 
 Bundled scripts include:
@@ -95,7 +98,7 @@ Bundled scripts include:
 - `sync-claude-cowork-skills.mjs`
 
 Repo-local scripts are still useful for CLI-first workflows. Faerry compares
-repo-local copies with the bundled versions in the Advanced view.
+repo-local copies with the bundled versions in Settings.
 
 ## License
 

@@ -42,6 +42,8 @@ pub struct AppState {
 #[serde(rename_all = "camelCase")]
 pub struct SourceConfigStatus {
     pub path: String,
+    pub standard_path: String,
+    pub legacy: bool,
     pub exists: bool,
     pub valid: bool,
     pub error: Option<String>,
@@ -52,23 +54,42 @@ pub struct SourceConfigStatus {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceSourceStatus {
+    pub index: usize,
     pub name: String,
     pub path: String,
+    pub url: String,
+    pub git_ref: String,
+    pub refresh: bool,
     pub resolved_path: String,
     pub enabled: bool,
+    pub skills: bool,
+    pub commands: bool,
+    pub designs: bool,
+    pub skills_path: String,
+    pub commands_path: String,
+    pub designs_path: String,
+    pub skill_paths: Vec<String>,
+    pub command_paths: Vec<String>,
+    pub design_paths: Vec<String>,
+    pub include_skills: Vec<String>,
+    pub exclude_skills: Vec<String>,
+    pub include_commands: Vec<String>,
+    pub exclude_commands: Vec<String>,
+    pub include_designs: Vec<String>,
+    pub exclude_designs: Vec<String>,
     pub resources: Vec<String>,
     pub status: String,
     pub message: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceSourcesFile {
     #[serde(default)]
     pub sources: Vec<ResourceSourceConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceSourceConfig {
     pub name: Option<String>,
@@ -114,6 +135,42 @@ pub struct ResourceSourceConfig {
     pub include_designs: Vec<String>,
     #[serde(default)]
     pub exclude_designs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceFormData {
+    pub name: String,
+    pub path: String,
+    pub url: String,
+    pub git_ref: String,
+    pub refresh: bool,
+    pub enabled: bool,
+    pub skills: bool,
+    pub commands: bool,
+    pub designs: bool,
+    pub skills_path: String,
+    pub commands_path: String,
+    pub designs_path: String,
+    pub skill_paths: Vec<String>,
+    pub command_paths: Vec<String>,
+    pub design_paths: Vec<String>,
+    pub include_skills: Vec<String>,
+    pub exclude_skills: Vec<String>,
+    pub include_commands: Vec<String>,
+    pub exclude_commands: Vec<String>,
+    pub include_designs: Vec<String>,
+    pub exclude_designs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceConfigEditResult {
+    pub ok: bool,
+    pub message: String,
+    pub validation_errors: Vec<String>,
+    pub diff: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

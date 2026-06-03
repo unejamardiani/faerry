@@ -17,8 +17,8 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir = Join-Path $RepoRoot "scripts"
 
-Write-Host "portable agents sync"
-Write-Host "repo $RepoRoot"
+Write-Host "Faerry workspace sync"
+Write-Host "workspace $RepoRoot"
 
 $LinkArgs = @(
     "-RepoRoot", $RepoRoot,

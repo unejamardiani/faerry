@@ -11,11 +11,19 @@ param(
 $ErrorActionPreference = "Stop"
 
 $AgentsHome = Join-Path $HomeDir ".agents"
-if (
-    -not (Test-Path -LiteralPath (Join-Path $RepoRoot "AGENTS.md")) -or
-    -not (Test-Path -LiteralPath (Join-Path $RepoRoot "skills"))
-) {
-    throw "Repo root does not match the expected .agents layout: $RepoRoot"
+$WorkspaceSignals = @(
+    "faerry.json",
+    "sources.json",
+    "AGENTS.md",
+    "skills",
+    "agents",
+    "commands",
+    "designs",
+    "DESIGN.md",
+    "mcp/servers.json"
+)
+if (-not ($WorkspaceSignals | Where-Object { Test-Path -LiteralPath (Join-Path $RepoRoot $_) })) {
+    throw "Folder does not look like a Faerry workspace: $RepoRoot"
 }
 
 $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -131,8 +139,18 @@ function Install-SharedAgents {
         New-Item -ItemType Directory -Path $AgentsHome -Force | Out-Null
     }
 
-    New-OrUpdateSymlink -Source (Join-Path $RepoRoot "AGENTS.md") -Target (Join-Path $AgentsHome "AGENTS.md") -Label "shared AGENTS.md"
-    New-OrUpdateSymlink -Source (Join-Path $RepoRoot "skills") -Target (Join-Path $AgentsHome "skills") -Label "shared skills"
+    $AgentsMd = Join-Path $RepoRoot "AGENTS.md"
+    $SkillsDir = Join-Path $RepoRoot "skills"
+    if (Test-Path -LiteralPath $AgentsMd) {
+        New-OrUpdateSymlink -Source $AgentsMd -Target (Join-Path $AgentsHome "AGENTS.md") -Label "shared AGENTS.md"
+    } else {
+        Write-Host "  skip shared AGENTS.md (not present)"
+    }
+    if (Test-Path -LiteralPath $SkillsDir) {
+        New-OrUpdateSymlink -Source $SkillsDir -Target (Join-Path $AgentsHome "skills") -Label "shared skills"
+    } else {
+        Write-Host "  skip shared skills (not present)"
+    }
 }
 
 function Install-Claude {
@@ -140,8 +158,12 @@ function Install-Claude {
     Write-Host ""
     Write-Host "Claude Code"
 
-    New-OrUpdateSymlink -Source (Join-Path $AgentsHome "AGENTS.md") -Target (Join-Path $HomeDir ".claude/CLAUDE.md") -Label "Claude global context"
-    New-OrUpdateSymlink -Source (Join-Path $AgentsHome "skills") -Target (Join-Path $HomeDir ".claude/skills") -Label "Claude skills"
+    if (Test-Path -LiteralPath (Join-Path $AgentsHome "AGENTS.md")) {
+        New-OrUpdateSymlink -Source (Join-Path $AgentsHome "AGENTS.md") -Target (Join-Path $HomeDir ".claude/CLAUDE.md") -Label "Claude global context"
+    } else { Write-Host "  skip Claude global context" }
+    if (Test-Path -LiteralPath (Join-Path $AgentsHome "skills")) {
+        New-OrUpdateSymlink -Source (Join-Path $AgentsHome "skills") -Target (Join-Path $HomeDir ".claude/skills") -Label "Claude skills"
+    } else { Write-Host "  skip Claude skills" }
 }
 
 function Install-OpenCode {
@@ -150,8 +172,12 @@ function Install-OpenCode {
     Write-Host "OpenCode"
 
     $OpenCodeHome = Join-Path $HomeDir ".config/opencode"
-    New-OrUpdateSymlink -Source (Join-Path $AgentsHome "AGENTS.md") -Target (Join-Path $OpenCodeHome "AGENTS.md") -Label "OpenCode global context"
-    New-OrUpdateSymlink -Source (Join-Path $AgentsHome "skills") -Target (Join-Path $OpenCodeHome "skills") -Label "OpenCode skills"
+    if (Test-Path -LiteralPath (Join-Path $AgentsHome "AGENTS.md")) {
+        New-OrUpdateSymlink -Source (Join-Path $AgentsHome "AGENTS.md") -Target (Join-Path $OpenCodeHome "AGENTS.md") -Label "OpenCode global context"
+    } else { Write-Host "  skip OpenCode global context" }
+    if (Test-Path -LiteralPath (Join-Path $AgentsHome "skills")) {
+        New-OrUpdateSymlink -Source (Join-Path $AgentsHome "skills") -Target (Join-Path $OpenCodeHome "skills") -Label "OpenCode skills"
+    } else { Write-Host "  skip OpenCode skills" }
 }
 
 function Install-Codex {
@@ -159,8 +185,12 @@ function Install-Codex {
     Write-Host ""
     Write-Host "Codex"
 
-    New-OrUpdateSymlink -Source (Join-Path $AgentsHome "AGENTS.md") -Target (Join-Path $CodexHome "AGENTS.md") -Label "Codex global context"
-    New-OrUpdateSymlink -Source (Join-Path $AgentsHome "skills") -Target (Join-Path $CodexHome "skills") -Label "Codex skills"
+    if (Test-Path -LiteralPath (Join-Path $AgentsHome "AGENTS.md")) {
+        New-OrUpdateSymlink -Source (Join-Path $AgentsHome "AGENTS.md") -Target (Join-Path $CodexHome "AGENTS.md") -Label "Codex global context"
+    } else { Write-Host "  skip Codex global context" }
+    if (Test-Path -LiteralPath (Join-Path $AgentsHome "skills")) {
+        New-OrUpdateSymlink -Source (Join-Path $AgentsHome "skills") -Target (Join-Path $CodexHome "skills") -Label "Codex skills"
+    } else { Write-Host "  skip Codex skills" }
 }
 
 function Install-CopilotEnv {

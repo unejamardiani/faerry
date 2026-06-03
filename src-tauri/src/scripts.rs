@@ -209,7 +209,7 @@ pub fn plan_repo_import(
         shallow,
         display_command,
         affected_paths: vec![repo::display_path(&destination)],
-        note: "Destination must not already exist. ZIP imports are extracted into a temporary folder, then normalized so the selected destination becomes the repo root.".into(),
+        note: "Destination must not already exist. ZIP imports are extracted into a temporary folder, then normalized so the selected destination becomes the workspace root.".into(),
     })
 }
 
@@ -322,7 +322,8 @@ fn run_git_import(plan: &RepoImportPlan, destination: &Path) -> Result<RepoImpor
     let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let valid = repo::is_agents_repo(destination);
     if output.status.success() && !valid {
-        stderr.push_str("\nClone completed, but the destination does not match the expected portable agents repo layout.");
+        stderr
+            .push_str("\nClone completed, but Faerry did not find a compatible workspace layout.");
     }
     Ok(RepoImportResult {
         ok: output.status.success() && valid,
@@ -358,7 +359,7 @@ fn run_zip_import(plan: &RepoImportPlan, destination: &Path) -> Result<RepoImpor
             repo_path: None,
             stdout: extract_output.0,
             stderr: format!(
-                "{}\nZIP extracted, but no portable agents repo layout was found.",
+                "{}\nZIP extracted, but no Faerry-compatible workspace was found.",
                 extract_output.1
             ),
         });

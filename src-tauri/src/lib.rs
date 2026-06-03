@@ -8,6 +8,7 @@ mod profiles;
 mod repo;
 mod script_versions;
 mod scripts;
+mod source_editor;
 mod status;
 mod validation;
 
@@ -15,7 +16,7 @@ use models::{
     AgentsMdInfo, AppState, CreateResult, DiffPreview, LogEntry, McpRegistryEditResult,
     McpServerFormData, PackageArtifact, PackageResult, Profile, RepoImportPlan, RepoImportResult,
     RepoValidation, RuntimeInfo, ScriptPlan, ScriptResult, ScriptVersionInfo, SelectiveSyncPlan,
-    StructuredOutput, UpdateCheckResult,
+    SourceConfigEditResult, SourceFormData, StructuredOutput, UpdateCheckResult,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -62,6 +63,35 @@ async fn preview_action(action: String, repo_path: Option<String>) -> Result<Dif
 #[tauri::command]
 fn choose_repo_path() -> Result<Option<String>, String> {
     scripts::choose_repo_path()
+}
+
+#[tauri::command]
+fn prepare_workspace(repo_path: String) -> Result<CreateResult, String> {
+    let root = Path::new(&repo_path);
+    if !root.exists() {
+        fs::create_dir_all(root).map_err(|error| error.to_string())?;
+    }
+    if !root.is_dir() {
+        return Ok(CreateResult {
+            ok: false,
+            path: repo::display_path(root),
+            message: "Selected path is not a folder.".into(),
+        });
+    }
+    let path = repo::standard_source_config_path(root);
+    if path.exists() {
+        return Ok(CreateResult {
+            ok: true,
+            path: repo::display_path(path),
+            message: "Workspace is already prepared.".into(),
+        });
+    }
+    fs::write(&path, "{\n  \"sources\": []\n}\n").map_err(|error| error.to_string())?;
+    Ok(CreateResult {
+        ok: true,
+        path: repo::display_path(path),
+        message: "Workspace prepared with faerry.json.".into(),
+    })
 }
 
 #[tauri::command]
@@ -402,6 +432,33 @@ fn edit_mcp_server(
         &action,
         data.as_ref(),
     ))
+}
+
+#[tauri::command]
+fn validate_source_form(data: SourceFormData) -> Result<Vec<String>, String> {
+    Ok(source_editor::validate_source(&data))
+}
+
+#[tauri::command]
+fn edit_source_config(
+    repo_path: Option<String>,
+    action: String,
+    index: Option<usize>,
+    data: Option<SourceFormData>,
+) -> Result<SourceConfigEditResult, String> {
+    let repo = repo::detect_repo_with_override(repo_path).map_err(|e| e.to_string())?;
+    Ok(source_editor::edit_source_config(
+        &repo.root,
+        &action,
+        index,
+        data.as_ref(),
+    ))
+}
+
+#[tauri::command]
+fn migrate_sources_json(repo_path: Option<String>) -> Result<SourceConfigEditResult, String> {
+    let repo = repo::detect_repo_with_override(repo_path).map_err(|e| e.to_string())?;
+    Ok(source_editor::migrate_sources_json(&repo.root))
 }
 
 // --- Feature 11: Skill Creation Wizard ---
@@ -749,6 +806,7 @@ pub fn run() {
             run_action,
             preview_action,
             choose_repo_path,
+            prepare_workspace,
             plan_repo_import,
             run_repo_import,
             open_path,
@@ -769,6 +827,9 @@ pub fn run() {
             // Feature 10: MCP Registry Editor
             validate_mcp_server,
             edit_mcp_server,
+            validate_source_form,
+            edit_source_config,
+            migrate_sources_json,
             // Feature 11: Skill Creation
             create_skill,
             // Feature 12: Command Creation

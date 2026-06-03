@@ -17,10 +17,10 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [options]
 
-One-command synchronization for the portable agents repository.
+One-command synchronization for a Faerry workspace.
 
 Default behavior:
-  1. Link ~/.agents to this repository.
+  1. Link ~/.agents to this workspace.
   2. Link Claude Code, OpenCode, Codex, and Copilot CLI to ~/.agents.
   3. Build Claude Desktop skill ZIPs from repo skills.
 
@@ -29,7 +29,7 @@ Use --with-cowork-live when you explicitly want to copy repo skills into
 existing Claude/Cowork skills-plugin workspaces.
 
 Options:
-  --repo-root PATH            Override repository root.
+  --repo-root PATH            Override workspace root.
   --home PATH                 Pass through to link-agents.sh.
   --codex-home PATH           Pass through to link-agents.sh.
   --skip-claude               Pass through to link-agents.sh.
@@ -96,7 +96,7 @@ done
 
 SCRIPT_DIR="$REPO_ROOT/scripts"
 
-echo "portable agents sync"
+echo "Faerry workspace sync"
 echo "repo $REPO_ROOT"
 
 if [[ "${#LINK_ARGS[@]}" -gt 0 ]]; then

@@ -9,7 +9,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-const SOURCES_FILENAME: &str = "sources.json";
 static AUTH_STATUS_CACHE: OnceLock<Mutex<BTreeMap<String, (Instant, String)>>> = OnceLock::new();
 
 pub fn build_state(repo_override: Option<String>) -> AppState {
@@ -57,6 +56,8 @@ pub fn build_state(repo_override: Option<String>) -> AppState {
             generated_at: generated_at(),
             source_config: SourceConfigStatus {
                 path: String::new(),
+                standard_path: String::new(),
+                legacy: false,
                 exists: false,
                 valid: false,
                 error: Some(error.to_string()),
@@ -126,10 +127,14 @@ struct GitSourceSpec {
 }
 
 fn read_source_config(repo: &AgentsRepo) -> SourceLoad {
-    let path = Path::new(&repo.root).join(SOURCES_FILENAME);
+    let root = Path::new(&repo.root);
+    let path = repo::source_config_path(root);
+    let standard_path = repo::standard_source_config_path(root);
     let display_path = repo::display_path(&path);
     let mut status = SourceConfigStatus {
         path: display_path,
+        standard_path: repo::display_path(standard_path),
+        legacy: repo::is_legacy_source_config(&path),
         exists: path.exists(),
         valid: true,
         error: None,
@@ -182,11 +187,37 @@ fn read_source_config(repo: &AgentsRepo) -> SourceLoad {
             .unwrap_or_default()
             .to_string();
         let resources = enabled_resources(source);
+        let skills_enabled = source.skills.unwrap_or(true);
+        let commands_enabled = source.commands.unwrap_or(true);
+        let designs_enabled = source.designs.unwrap_or(false);
         let mut source_status = ResourceSourceStatus {
+            index,
             name: name.clone(),
             path: source_display,
+            url: source.url.clone().unwrap_or_default(),
+            git_ref: source
+                .git_ref
+                .clone()
+                .or_else(|| source.branch.clone())
+                .unwrap_or_default(),
+            refresh: source.refresh.unwrap_or(false),
             resolved_path: String::new(),
             enabled,
+            skills: skills_enabled,
+            commands: commands_enabled,
+            designs: designs_enabled,
+            skills_path: source.skills_path.clone().unwrap_or_default(),
+            commands_path: source.commands_path.clone().unwrap_or_default(),
+            designs_path: source.designs_path.clone().unwrap_or_default(),
+            skill_paths: source.skill_paths.clone(),
+            command_paths: source.command_paths.clone(),
+            design_paths: source.design_paths.clone(),
+            include_skills: source.include_skills.clone(),
+            exclude_skills: source.exclude_skills.clone(),
+            include_commands: source.include_commands.clone(),
+            exclude_commands: source.exclude_commands.clone(),
+            include_designs: source.include_designs.clone(),
+            exclude_designs: source.exclude_designs.clone(),
             resources: resources.clone(),
             status: "disabled".into(),
             message: "Source is disabled.".into(),
@@ -2063,7 +2094,7 @@ mod tests {
         )
         .unwrap();
         fs::write(
-            repo_root.join(SOURCES_FILENAME),
+            repo_root.join(repo::FAERRY_CONFIG_FILENAME),
             format!(
                 r#"{{
   "sources": [
@@ -2275,7 +2306,7 @@ mod tests {
         );
 
         fs::write(
-            repo_root.join(SOURCES_FILENAME),
+            repo_root.join(repo::FAERRY_CONFIG_FILENAME),
             format!(
                 r#"{{
   "sources": [
@@ -2340,7 +2371,7 @@ mod tests {
         )
         .unwrap();
         fs::write(
-            repo_root.join(SOURCES_FILENAME),
+            repo_root.join(repo::FAERRY_CONFIG_FILENAME),
             format!(
                 r#"{{
   "sources": [
@@ -2397,7 +2428,7 @@ mod tests {
         )
         .unwrap();
         fs::write(
-            repo_root.join(SOURCES_FILENAME),
+            repo_root.join(repo::FAERRY_CONFIG_FILENAME),
             format!(
                 r#"{{
   "sources": [
