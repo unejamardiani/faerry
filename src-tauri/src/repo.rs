@@ -270,7 +270,22 @@ pub fn display_path(path: impl AsRef<Path>) -> String {
 }
 
 fn normalize(path: PathBuf) -> PathBuf {
-    path.canonicalize().unwrap_or(path)
+    strip_unc_prefix(path.canonicalize().unwrap_or(path))
+}
+
+#[cfg(windows)]
+fn strip_unc_prefix(path: PathBuf) -> PathBuf {
+    let raw = path.to_string_lossy().to_string();
+    let stripped = raw
+        .strip_prefix(r"\\?\")
+        .or_else(|| raw.strip_prefix("//?/"))
+        .unwrap_or(&raw);
+    PathBuf::from(stripped)
+}
+
+#[cfg(not(windows))]
+fn strip_unc_prefix(path: PathBuf) -> PathBuf {
+    path
 }
 
 #[cfg(test)]
