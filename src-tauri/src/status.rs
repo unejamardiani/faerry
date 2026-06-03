@@ -455,8 +455,11 @@ fn normalize_git_clone_url(repo: &AgentsRepo, url: &str) -> String {
     };
 
     if local_path.exists() {
-        path_to_file_url(&local_path)
+        let url = path_to_file_url(&local_path);
+        eprintln!("[normalize_git_clone_url] local path exists: {:?} -> {}", local_path, url);
+        url
     } else {
+        eprintln!("[normalize_git_clone_url] local path does NOT exist: {:?}", local_path);
         trimmed.to_string()
     }
 }
@@ -622,7 +625,9 @@ fn ensure_git_cache(
     if output.status.success() {
         Ok(warnings)
     } else {
-        Err(format!("Git clone failed. {}", command_error(&output)))
+        let error_msg = format!("Git clone failed. {}", command_error(&output));
+        eprintln!("[ensure_git_cache] {}", error_msg);
+        Err(error_msg)
     }
 }
 
@@ -2379,6 +2384,17 @@ mod tests {
         .unwrap();
 
         let state = build_state(Some(repo::display_path(&repo_root)));
+
+        if state.source_config.sources.len() != 1 || state.source_config.sources[0].status != "loaded" {
+            eprintln!("=== Git source test diagnostics ===");
+            for s in &state.source_config.sources {
+                eprintln!("  source: name={}, status={}, message={}", s.name, s.status, s.message);
+            }
+            for w in &state.source_config.warnings {
+                eprintln!("  warning: {}", w);
+            }
+            eprintln!("=== end diagnostics ===");
+        }
 
         assert_eq!(state.source_config.sources.len(), 1);
         assert_eq!(state.source_config.sources[0].status, "loaded");
