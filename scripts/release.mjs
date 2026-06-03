@@ -105,7 +105,7 @@ function run(command, commandArgs, options = {}) {
   const result = spawnSync(executable, commandArgs, {
     cwd: options.cwd ?? appRoot,
     stdio: "inherit",
-    shell: false,
+    shell: process.platform === "win32",
   });
   if (result.error) {
     fail(`${label} failed: ${result.error.message}`);

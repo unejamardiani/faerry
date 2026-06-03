@@ -82,7 +82,7 @@ jobs:
         run: npm run release
 
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact-name }}
           if-no-files-found: error
