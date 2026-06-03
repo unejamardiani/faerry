@@ -2380,6 +2380,21 @@ mod tests {
 
         let state = build_state(Some(repo::display_path(&repo_root)));
 
+        if state.source_config.sources.len() != 1 || state.source_config.sources[0].status != "loaded" {
+            eprintln!("=== Git source test diagnostics ===");
+            for s in &state.source_config.sources {
+                eprintln!("  source: name={}, status={}, message={}, resolved_path={}", s.name, s.status, s.message, s.resolved_path);
+            }
+            for w in &state.source_config.warnings {
+                eprintln!("  warning: {}", w);
+            }
+            eprintln!("=== skills ({}) ===", state.skills.len());
+            for sk in &state.skills {
+                eprintln!("  skill: name={}, source_name={}, path={}", sk.name, sk.source_name, sk.path);
+            }
+            eprintln!("=== end diagnostics ===");
+        }
+
         assert_eq!(state.source_config.sources.len(), 1);
         assert_eq!(state.source_config.sources[0].status, "loaded");
         let skill = state
