@@ -137,8 +137,8 @@ through `.github/workflows/release.yml`.
 Create a normal public release by pushing a version tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.0-alpha.1
+git push origin v0.1.0-alpha.1
 ```
 
 The workflow builds every platform, uploads the portable archives as workflow
@@ -146,7 +146,8 @@ artifacts, then creates or updates the matching GitHub Release page. Users can
 download the app from that release page under "Assets".
 
 The workflow can also be started manually from the GitHub Actions UI. If no tag
-is provided, it uses the version from `package.json`, for example `v0.1.0`.
+is provided, it uses the version from `package.json`, for example
+`v0.1.0-alpha.1`.
 
 ## Bundled Scripts
 
