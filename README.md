@@ -1,5 +1,9 @@
 # Faerry
 
+<p align="center">
+  <img src="assets/logo/faerry-lockup-horizontal.svg" alt="Faerry" width="420">
+</p>
+
 Faerry is a desktop app for carrying agent configuration across tools. It keeps
 one workspace as the source of truth for instructions, skills, MCP servers, and
 optional source repositories, then links or syncs that setup into tools such as

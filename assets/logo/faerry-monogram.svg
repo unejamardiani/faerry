@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+
+  <g aria-label="Faerry F monogram">
+    <circle cx="128" cy="128" r="108" fill="#10201f"/>
+    <path fill="#fbfcf8" d="M91 62h92v24h-62v41h54v24h-54v61H91V62Z"/>
+    <rect x="142" y="127" width="41" height="24" rx="8" fill="#24b8a3"/>
+  </g>
+</svg>

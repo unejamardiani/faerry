@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+
+  <defs>
+    <clipPath id="faerry-mark-clip"><circle cx="128" cy="128" r="108"/></clipPath>
+  </defs>
+  <g aria-label="Faerry standalone ferry seal mark">
+    <g clip-path="url(#faerry-mark-clip)">
+      <rect x="0" y="132" width="256" height="124" fill="#10201f"/>
+      <rect x="0" y="124" width="158" height="9" fill="#10201f"/>
+      <polygon points="158,124 224,124 217,133 165,133" fill="#24b8a3"/>
+    </g>
+    <circle cx="128" cy="128" r="108" fill="none" stroke="#10201f" stroke-width="18"/>
+    <path fill="#10201f" d="M86 112h84l-9 20H95l-9-20Zm28-27h28v27h-28V85Z"/>
+  </g>
+</svg>
