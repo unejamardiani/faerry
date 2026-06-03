@@ -111,6 +111,7 @@ pub fn list_markdown_files(path: impl AsRef<Path>) -> Vec<String> {
 
 pub fn parse_frontmatter(markdown: &str) -> std::collections::BTreeMap<String, String> {
     let mut result = std::collections::BTreeMap::new();
+    let markdown = markdown.replace("\r\n", "\n");
     if !markdown.starts_with("---\n") {
         return result;
     }

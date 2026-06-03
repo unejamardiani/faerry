@@ -921,7 +921,6 @@ fn read_skills(
         .collect();
 
     for source in sources {
-        eprintln!("[read_skills] processing source: name={}, skills_dir={:?}, skill_dirs={:?}", source.name, source.skills_dir, source.skill_dirs);
         let Some(skills_dir) = &source.skills_dir else {
             for skill_dir in &source.skill_dirs {
                 read_source_skill_dir(
@@ -974,11 +973,8 @@ fn read_source_skill_dir(
     aggregate_skills_dir: Option<&Path>,
 ) {
     let file = path.join("SKILL.md");
-    let file_exists = file.exists();
     let text = repo::read_text(&file).unwrap_or_default();
     let frontmatter = repo::parse_frontmatter(&text);
-    let detected_name = frontmatter.get("name").cloned().unwrap_or_default();
-    eprintln!("[read_source_skill_dir] path={:?}, file_exists={}, text_len={}, frontmatter_name={:?}", path, file_exists, text.len(), detected_name);
     let folder_name = path
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
@@ -2383,19 +2379,6 @@ mod tests {
         .unwrap();
 
         let state = build_state(Some(repo::display_path(&repo_root)));
-
-        eprintln!("=== Git source test diagnostics ===");
-        for s in &state.source_config.sources {
-            eprintln!("  source: name={}, status={}, message={}, resolved_path={}", s.name, s.status, s.message, s.resolved_path);
-        }
-        for w in &state.source_config.warnings {
-            eprintln!("  warning: {}", w);
-        }
-        eprintln!("=== skills ({}) ===", state.skills.len());
-        for sk in &state.skills {
-            eprintln!("  skill: name={}, source_name={}, path={}, file={}", sk.name, sk.source_name, sk.path, sk.file);
-        }
-        eprintln!("=== end diagnostics ===");
 
         assert_eq!(state.source_config.sources.len(), 1);
         assert_eq!(state.source_config.sources[0].status, "loaded");
