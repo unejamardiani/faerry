@@ -467,7 +467,13 @@ fn is_remote_git_url(value: &str) -> bool {
 
 fn path_to_file_url(path: &Path) -> String {
     let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let mut value = resolved.to_string_lossy().replace('\\', "/");
+    let raw = resolved.to_string_lossy().to_string();
+    // Strip Windows UNC verbatim prefix (\\?\ or //?/) which git on Windows does not accept.
+    let stripped = raw
+        .strip_prefix(r"\\?\")
+        .or_else(|| raw.strip_prefix("//?/"))
+        .unwrap_or(&raw);
+    let mut value = stripped.replace('\\', "/");
     if cfg!(windows) && !value.starts_with('/') {
         value = format!("/{value}");
     }
