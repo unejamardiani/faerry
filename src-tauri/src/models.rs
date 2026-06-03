@@ -575,5 +575,16 @@ pub struct UpdateCheckResult {
     pub latest_version: Option<String>,
     pub update_url: Option<String>,
     pub up_to_date: bool,
+    pub can_install: bool,
+    pub target: Option<String>,
+    pub notes: Option<String>,
+    pub pub_date: Option<String>,
     pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallUpdateResult {
+    pub ok: bool,
+    pub message: String,
 }

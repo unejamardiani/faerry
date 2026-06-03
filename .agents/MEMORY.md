@@ -25,19 +25,37 @@
 - The normal release command is `npm run release`.
 - Supported release targets: macOS, Windows, Linux.
 - Release artifacts are built per target OS, not cross-compiled by default.
-- Portable packaging outputs:
-  - macOS: `.zip` with `Faerry.app`
-  - Windows: `.zip` with `Faerry.exe`
-  - Linux: `.tar.gz` with executable `Faerry`
+- Each release ships both installable bundles and portable packages:
+  - macOS: `.dmg` plus `.app.tar.gz` and `.app.tar.gz.sig` updater artifacts,
+    and a portable `.zip` with `Faerry.app`.
+  - Windows: NSIS setup `.exe` plus `.exe.sig`, and a portable `.zip` with
+    `Faerry.exe`.
+  - Linux: `.AppImage` plus `.AppImage.sig`, and a portable `.tar.gz` with
+    executable `Faerry`.
 - Every portable package gets a `.sha256` sidecar.
 - Every release gets a JSON manifest under
   `src-tauri/target/release/bundle/release/`.
 - GitHub releases are created by `.github/workflows/release.yml`.
 - Pushing a `v*` tag runs the macOS, Windows, and Linux release matrix and
-  publishes the portable assets to the GitHub Release page.
+  publishes installers, updater signatures, portable archives, release
+  manifests, and the `latest.json` updater manifest.
 - The same workflow can also be started manually from the GitHub Actions UI.
 - When a coding task is done, run `npm run release` unless explicitly skipped
   or impossible in the current environment.
+
+## Update Decisions
+
+- The in-app updater uses `tauri-plugin-updater` with the GitHub Releases
+  endpoint
+  `https://github.com/unejamardiani/faerry/releases/latest/download/latest.json`.
+- The updater public key is committed in `src-tauri/tauri.conf.json`.
+- The updater private key and optional password are GitHub Actions secrets
+  `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+- Windows updater install mode is `passive`, so the NSIS installer runs with
+  minimal UI and Faerry restarts after install.
+- Faerry runs a quiet update check on startup. The About > Updates panel
+  exposes a manual "Check for Updates" action and an "Install Update" action
+  that requires user confirmation before installing.
 
 ## Verification Baseline
 

@@ -409,7 +409,7 @@ fn resolve_git_source(
         .clone()
         .or_else(|| source.branch.clone())
         .filter(|value| !value.trim().is_empty());
-    let spec = git_source_spec(url, explicit_ref);
+    let spec = git_source_spec(repo, url, explicit_ref);
     let cache_path = git_cache_path(repo, name, &spec);
     let warnings = ensure_git_cache(&spec, &cache_path, source.refresh.unwrap_or(false))?;
     let source_path = spec
@@ -430,15 +430,62 @@ fn resolve_git_source(
     })
 }
 
-fn git_source_spec(url: &str, explicit_ref: Option<String>) -> GitSourceSpec {
+fn git_source_spec(repo: &AgentsRepo, url: &str, explicit_ref: Option<String>) -> GitSourceSpec {
     if let Some(spec) = parse_github_web_url(url, explicit_ref.clone()) {
         return spec;
     }
     GitSourceSpec {
-        clone_url: url.trim().to_string(),
+        clone_url: normalize_git_clone_url(repo, url),
         git_ref: explicit_ref,
         subpath: None,
     }
+}
+
+fn normalize_git_clone_url(repo: &AgentsRepo, url: &str) -> String {
+    let trimmed = url.trim();
+    if is_remote_git_url(trimmed) {
+        return trimmed.to_string();
+    }
+
+    let expanded = repo::resolve_user_path(trimmed).unwrap_or_else(|_| PathBuf::from(trimmed));
+    let local_path = if expanded.is_absolute() {
+        expanded
+    } else {
+        Path::new(&repo.root).join(expanded)
+    };
+
+    if local_path.exists() {
+        path_to_file_url(&local_path)
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn is_remote_git_url(value: &str) -> bool {
+    value.contains("://") || value.starts_with("git@") || value.starts_with("ssh://")
+}
+
+fn path_to_file_url(path: &Path) -> String {
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let mut value = resolved.to_string_lossy().replace('\\', "/");
+    if cfg!(windows) && !value.starts_with('/') {
+        value = format!("/{value}");
+    }
+    format!("file://{}", percent_encode_file_url_path(&value))
+}
+
+fn percent_encode_file_url_path(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        let keep = byte.is_ascii_alphanumeric()
+            || matches!(byte, b'/' | b':' | b'-' | b'.' | b'_' | b'~');
+        if keep {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 fn parse_github_web_url(url: &str, explicit_ref: Option<String>) -> Option<GitSourceSpec> {

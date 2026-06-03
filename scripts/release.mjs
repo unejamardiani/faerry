@@ -21,9 +21,9 @@ if (args.has("--help")) {
 Run the normal Faerry release process for the current operating system:
   1. TypeScript/Rust check
   2. Rust tests
-  3. Tauri release build
+  3. Tauri release build with installable bundles
   4. Portable package
-  5. Release manifest with SHA-256 checksums
+  5. Release manifest with SHA-256 checksums and updater artifacts
 
 Supported platforms:
   macOS, Windows, Linux
@@ -67,11 +67,8 @@ const manifestPath = path.join(
 
 const artifacts = [
   artifact("portable", portableArchive, true),
+  ...nativeBuildArtifacts(),
 ];
-const nativeArtifact = nativeBuildArtifactPath();
-if (nativeArtifact && fs.existsSync(nativeArtifact.path)) {
-  artifacts.push(artifact(nativeArtifact.kind, nativeArtifact.path, nativeArtifact.checksum));
-}
 
 const manifest = {
   productName: appName,
@@ -90,11 +87,7 @@ console.log(`Release manifest created: ${manifestPath}`);
 console.log(`Portable checksum: ${portableChecksumPath}`);
 
 function runTauriReleaseBuild() {
-  if (platform === "darwin") {
-    run("npm", ["run", "tauri", "--", "build", "--bundles", "app"]);
-    return;
-  }
-  run("npm", ["run", "tauri", "--", "build", "--no-bundle"]);
+  run("npm", ["run", "tauri", "--", "build", "--bundles", nativeBundleTargets(platform).join(",")]);
 }
 
 function run(command, commandArgs, options = {}) {
@@ -135,26 +128,53 @@ function artifact(kind, target, includeChecksum) {
   return item;
 }
 
-function nativeBuildArtifactPath() {
+function nativeBundleTargets(value) {
+  if (value === "darwin") return ["app", "dmg"];
+  if (value === "win32") return ["nsis"];
+  return ["appimage"];
+}
+
+function nativeBuildArtifacts() {
+  const bundleRoot = path.join(tauriDir, "target", "release", "bundle");
   if (platform === "darwin") {
-    return {
-      kind: "macos-app",
-      path: path.join(tauriDir, "target", "release", "bundle", "macos", `${appName}.app`),
-      checksum: false,
-    };
+    return [
+      artifactIfExists("macos-app", path.join(bundleRoot, "macos", `${appName}.app`), false),
+      ...artifactsIn(path.join(bundleRoot, "dmg"), (file) => file.endsWith(".dmg"), "macos-dmg"),
+      ...artifactsIn(path.join(bundleRoot, "macos"), (file) => file.endsWith(".app.tar.gz"), "macos-updater"),
+      ...artifactsIn(path.join(bundleRoot, "macos"), (file) => file.endsWith(".app.tar.gz.sig"), "macos-updater-signature"),
+    ].filter(Boolean);
   }
   if (platform === "win32") {
-    return {
-      kind: "windows-exe",
-      path: path.join(tauriDir, "target", "release", `${binaryName}.exe`),
-      checksum: true,
-    };
+    const nsisDir = path.join(bundleRoot, "nsis");
+    return [
+      ...artifactsIn(nsisDir, (file) => file.endsWith(".exe"), "windows-nsis"),
+      ...artifactsIn(nsisDir, (file) => file.endsWith(".exe.sig"), "windows-nsis-signature"),
+    ];
   }
-  return {
-    kind: "linux-binary",
-    path: path.join(tauriDir, "target", "release", binaryName),
-    checksum: true,
-  };
+  const appImageDir = path.join(bundleRoot, "appimage");
+  return [
+    ...artifactsIn(appImageDir, (file) => file.endsWith(".AppImage"), "linux-appimage"),
+    ...artifactsIn(appImageDir, (file) => file.endsWith(".AppImage.sig"), "linux-appimage-signature"),
+  ];
+}
+
+function artifactIfExists(kind, target, includeChecksum) {
+  return fs.existsSync(target) ? artifact(kind, target, includeChecksum) : null;
+}
+
+function artifactsIn(dir, predicate, kind) {
+  if (!fs.existsSync(dir)) return [];
+  return listFiles(dir)
+    .filter((file) => predicate(path.basename(file)))
+    .map((file) => artifact(kind, file, true));
+}
+
+function listFiles(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .flatMap((entry) => {
+      const child = path.join(dir, entry.name);
+      return entry.isDirectory() ? listFiles(child) : [child];
+    });
 }
 
 function portableArchivePath() {

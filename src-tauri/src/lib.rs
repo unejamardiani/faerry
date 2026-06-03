@@ -16,7 +16,8 @@ use models::{
     AgentsMdInfo, AppState, CreateResult, DiffPreview, LogEntry, McpRegistryEditResult,
     McpServerFormData, PackageArtifact, PackageResult, Profile, RepoImportPlan, RepoImportResult,
     RepoValidation, RuntimeInfo, ScriptPlan, ScriptResult, ScriptVersionInfo, SelectiveSyncPlan,
-    SourceConfigEditResult, SourceFormData, StructuredOutput, UpdateCheckResult,
+    SourceConfigEditResult, SourceFormData, StructuredOutput, InstallUpdateResult,
+    UpdateCheckResult,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -24,7 +25,12 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
+use tauri::{AppHandle, State};
+use tauri_plugin_updater::{Update, UpdaterExt};
+
+struct PendingUpdate(Mutex<Option<Update>>);
 
 #[tauri::command]
 async fn get_state(repo_path: Option<String>) -> Result<AppState, String> {
@@ -679,16 +685,71 @@ fn execute_package_script(repo_path: &str, script_name: &str) -> Result<PackageR
 // --- Feature 20: Update Check ---
 
 #[tauri::command]
-fn check_for_updates() -> Result<UpdateCheckResult, String> {
+async fn check_for_updates(
+    app: AppHandle,
+    pending_update: State<'_, PendingUpdate>,
+) -> Result<UpdateCheckResult, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    // TODO: In production, check GitHub releases or a version manifest endpoint
-    // For now, return up-to-date status
-    Ok(UpdateCheckResult {
-        current_version: current_version.clone(),
-        latest_version: None,
-        update_url: Some("https://github.com/unejamardiani/faerry/releases".into()),
-        up_to_date: true,
-        note: format!("Update check requires a remote endpoint. Current: v{current_version}."),
+    let update = app
+        .updater()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let Some(update) = update else {
+        *pending_update.0.lock().map_err(|error| error.to_string())? = None;
+        return Ok(UpdateCheckResult {
+            current_version: current_version.clone(),
+            latest_version: None,
+            update_url: Some("https://github.com/unejamardiani/faerry/releases".into()),
+            up_to_date: true,
+            can_install: false,
+            target: tauri_plugin_updater::target(),
+            notes: None,
+            pub_date: None,
+            note: format!("Faerry is up to date. Current: v{current_version}."),
+        });
+    };
+
+    let result = UpdateCheckResult {
+        current_version,
+        latest_version: Some(update.version.clone()),
+        update_url: Some(update.download_url.to_string()),
+        up_to_date: false,
+        can_install: true,
+        target: Some(update.target.clone()),
+        notes: update.body.clone(),
+        pub_date: update.date.map(|date| date.to_string()),
+        note: "Update is ready to install. Faerry may restart during installation.".into(),
+    };
+    *pending_update.0.lock().map_err(|error| error.to_string())? = Some(update);
+    Ok(result)
+}
+
+#[tauri::command]
+async fn install_update(
+    app: AppHandle,
+    pending_update: State<'_, PendingUpdate>,
+) -> Result<InstallUpdateResult, String> {
+    let Some(update) = pending_update
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .take()
+    else {
+        return Err("There is no pending update. Check for updates first.".into());
+    };
+
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|error| error.to_string())?;
+    app.restart();
+    #[allow(unreachable_code)]
+    Ok(InstallUpdateResult {
+        ok: true,
+        message: "Update installed. Faerry is restarting.".into(),
     })
 }
 
@@ -800,6 +861,8 @@ fn plan_selective_sync(
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(PendingUpdate(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             get_state,
             plan_action,
@@ -841,6 +904,7 @@ pub fn run() {
             package_claude_skills,
             // Feature 20: Update Check
             check_for_updates,
+            install_update,
             // Feature 22: Safety Guardrails
             check_safety_guards,
             // Feature 14: Selective Sync

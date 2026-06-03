@@ -92,11 +92,12 @@ console.log(`Portable package created: ${outputArchive}`);
 console.log(`SHA-256 checksum: ${checksumPath}`);
 
 function runTauriBuild() {
+  const portableBuildConfig = JSON.stringify({ bundle: { createUpdaterArtifacts: false } });
   if (platform === "darwin") {
-    run("npm", ["run", "tauri", "--", "build", "--bundles", "app"]);
+    run("npm", ["run", "tauri", "--", "build", "--bundles", "app", "--config", portableBuildConfig]);
     return;
   }
-  run("npm", ["run", "tauri", "--", "build", "--no-bundle"]);
+  run("npm", ["run", "tauri", "--", "build", "--no-bundle", "--config", portableBuildConfig]);
 }
 
 function writeReadme(openingLine) {

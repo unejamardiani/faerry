@@ -112,9 +112,15 @@ The release command runs:
 
 - `npm run check`
 - `cargo test --manifest-path src-tauri/Cargo.toml`
-- a Tauri release build for the current platform
+- a Tauri release build with installable bundles for the current platform
 - `npm run package:portable -- --no-build`
-- a JSON release manifest with SHA-256 checksums
+- a JSON release manifest with SHA-256 checksums and updater artifacts
+
+Installable artifacts are written by Tauri under `src-tauri/target/release/bundle/`:
+
+- macOS: `.dmg` plus `.app.tar.gz` and `.sig` updater artifacts
+- Windows: NSIS setup `.exe` plus `.sig`
+- Linux: `.AppImage` plus `.sig`
 
 Portable artifacts are written to:
 
@@ -124,6 +130,10 @@ Portable artifacts are written to:
 
 Each portable artifact also gets a `.sha256` sidecar file. Release manifests are
 written to `src-tauri/target/release/bundle/release/`.
+
+Updater artifacts require `TAURI_SIGNING_PRIVATE_KEY` during release builds.
+Store the private key content in the GitHub repository secret with that name.
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is optional when the key has a password.
 
 Use `npm run package:portable -- --no-build` only when a release binary has
 already been built and you want to rebuild the portable archive without running
@@ -141,9 +151,13 @@ git tag v0.1.0-alpha.4
 git push origin v0.1.0-alpha.4
 ```
 
-The workflow builds every platform, uploads the portable archives as workflow
-artifacts, then creates or updates the matching GitHub Release page. Users can
-download the app from that release page under "Assets".
+The workflow builds every platform, uploads installers, updater signatures,
+portable archives, and release manifests as workflow artifacts, then creates or
+updates the matching GitHub Release page. The publish job also writes
+`latest.json`, which the installed app uses for in-app update checks.
+
+Users can install Faerry with the setup artifact for their platform or download
+the portable package if they do not want an installed app.
 
 The workflow can also be started manually from the GitHub Actions UI. If no tag
 is provided, it uses the version from `package.json`, for example

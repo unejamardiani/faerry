@@ -283,7 +283,16 @@ type UpdateCheckResult = {
   latestVersion?: string;
   updateUrl?: string;
   upToDate: boolean;
+  canInstall: boolean;
+  target?: string;
+  notes?: string;
+  pubDate?: string;
   note: string;
+};
+
+type InstallUpdateResult = {
+  ok: boolean;
+  message: string;
 };
 
 type RepoValidation = {
@@ -417,6 +426,7 @@ function App() {
   const [safetyWarnings, setSafetyWarnings] = useState<string[]>([]);
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
   const [repoValidation, setRepoValidation] = useState<RepoValidation | null>(null);
   const [validating, setValidating] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -468,14 +478,35 @@ function App() {
     await openPath(agentsMdInfo.path);
   }
 
-  async function checkForUpdates() {
-    setCheckingUpdate(true);
+  async function checkForUpdates(options: { silent?: boolean } = {}) {
+    if (!options.silent) setCheckingUpdate(true);
     try {
       setUpdateResult(await invoke<UpdateCheckResult>("check_for_updates"));
     } catch (error) {
-      setOutput(String(error));
+      if (!options.silent) {
+        setOutput(String(error));
+        setMeta("Update check failed.");
+      }
     } finally {
-      setCheckingUpdate(false);
+      if (!options.silent) setCheckingUpdate(false);
+    }
+  }
+
+  async function installUpdate() {
+    if (!updateResult?.canInstall) return;
+    const version = updateResult.latestVersion ? ` v${updateResult.latestVersion}` : "";
+    const confirmed = window.confirm(`Install Faerry${version}? The app may restart during installation.`);
+    if (!confirmed) return;
+
+    setInstallingUpdate(true);
+    try {
+      const result = await invoke<InstallUpdateResult>("install_update");
+      setMeta(result.message);
+    } catch (error) {
+      setOutput(String(error));
+      setMeta("Update installation failed.");
+    } finally {
+      setInstallingUpdate(false);
     }
   }
 
@@ -494,6 +525,7 @@ function App() {
 
   useEffect(() => {
     refresh();
+    checkForUpdates({ silent: true });
   }, []);
 
   useEffect(() => {
@@ -751,6 +783,7 @@ function App() {
                 safetyWarnings={safetyWarnings}
                 updateResult={updateResult}
                 checkingUpdate={checkingUpdate}
+                installingUpdate={installingUpdate}
                 repoValidation={repoValidation}
                 validating={validating}
                 onAction={reviewAction}
@@ -762,6 +795,7 @@ function App() {
                 onValidate={validateRepo}
                 onLoadAboutInfo={loadAboutInfo}
                 onCheckUpdates={checkForUpdates}
+                onInstallUpdate={installUpdate}
                 onOpenAgentsMd={openAgentsMd}
                 onRefresh={refresh}
                 openPath={openPath}
@@ -1388,6 +1422,7 @@ function AdvancedView({
   safetyWarnings,
   updateResult,
   checkingUpdate,
+  installingUpdate,
   repoValidation,
   validating,
   onAction,
@@ -1399,6 +1434,7 @@ function AdvancedView({
   onValidate,
   onLoadAboutInfo,
   onCheckUpdates,
+  onInstallUpdate,
   onOpenAgentsMd,
   onRefresh,
   openPath,
@@ -1416,6 +1452,7 @@ function AdvancedView({
   safetyWarnings: string[];
   updateResult: UpdateCheckResult | null;
   checkingUpdate: boolean;
+  installingUpdate: boolean;
   repoValidation: RepoValidation | null;
   validating: boolean;
   onAction: (action: string) => void;
@@ -1427,6 +1464,7 @@ function AdvancedView({
   onValidate: () => void;
   onLoadAboutInfo: () => void;
   onCheckUpdates: () => void;
+  onInstallUpdate: () => void;
   onOpenAgentsMd: () => void;
   onRefresh: () => void;
   openPath: (path: string) => void;
@@ -1467,7 +1505,9 @@ function AdvancedView({
           safetyWarnings={safetyWarnings}
           updateResult={updateResult}
           checkingUpdate={checkingUpdate}
+          installingUpdate={installingUpdate}
           onCheckUpdates={onCheckUpdates}
+          onInstallUpdate={onInstallUpdate}
           onOpenAgentsMd={onOpenAgentsMd}
           copyText={copyText}
         />
@@ -2336,7 +2376,9 @@ function About({
   safetyWarnings,
   updateResult,
   checkingUpdate,
+  installingUpdate,
   onCheckUpdates,
+  onInstallUpdate,
   onOpenAgentsMd,
   copyText,
 }: {
@@ -2347,7 +2389,9 @@ function About({
   safetyWarnings: string[];
   updateResult: UpdateCheckResult | null;
   checkingUpdate: boolean;
+  installingUpdate: boolean;
   onCheckUpdates: () => void;
+  onInstallUpdate: () => void;
   onOpenAgentsMd: () => void;
   copyText: (text: string) => void;
 }) {
@@ -2473,15 +2517,21 @@ function About({
 
       <Panel title="Updates" subtitle="Check for newer versions of Faerry.">
         <div className="buttonRow padded compact">
-          <button className="primaryButton" onClick={onCheckUpdates} disabled={checkingUpdate}>
+          <button className="primaryButton" onClick={onCheckUpdates} disabled={checkingUpdate || installingUpdate}>
             {checkingUpdate ? "Checking..." : "Check for Updates"}
           </button>
+          {updateResult?.canInstall && (
+            <button className="primaryButton" onClick={onInstallUpdate} disabled={checkingUpdate || installingUpdate}>
+              {installingUpdate ? "Installing..." : "Install Update"}
+            </button>
+          )}
         </div>
         {updateResult && (
           <div className="aboutGrid">
             <div>
               <Field label="Current Version">{updateResult.currentVersion}</Field>
               <Field label="Latest Version">{updateResult.latestVersion ?? "unknown"}</Field>
+              <Field label="Update Target">{updateResult.target ?? "default"}</Field>
               <Field label="Update Available">
                 <StatusPill value={updateResult.upToDate ? "up-to-date" : "available"} />
               </Field>
@@ -2489,6 +2539,8 @@ function About({
             {updateResult.updateUrl && (
               <div>
                 <Field label="Download URL"><div className="path">{updateResult.updateUrl}</div></Field>
+                {updateResult.pubDate && <Field label="Published">{updateResult.pubDate}</Field>}
+                {updateResult.notes && <Field label="Release Notes">{updateResult.notes}</Field>}
                 <Field label="Note">{updateResult.note}</Field>
               </div>
             )}
