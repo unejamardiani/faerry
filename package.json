@@ -1,6 +1,6 @@
 {
   "name": "faerry",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-alpha.10",
   "type": "module",
   "description": "Faerry carries portable agent configuration across tools.",
   "scripts": {

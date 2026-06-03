@@ -40,6 +40,8 @@ if (!["darwin", "win32", "linux"].includes(platform)) {
   fail(`Release packaging is not implemented for ${platform}.`);
 }
 
+syncTauriConfVersion(packageJson.version);
+
 if (!args.has("--skip-checks")) {
   run("npm", ["run", "check"]);
 }
@@ -85,6 +87,16 @@ fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
 console.log(`Release manifest created: ${manifestPath}`);
 console.log(`Portable checksum: ${portableChecksumPath}`);
+
+function syncTauriConfVersion(version) {
+  const tauriConfPath = path.join(tauriDir, "tauri.conf.json");
+  const conf = JSON.parse(fs.readFileSync(tauriConfPath, "utf8"));
+  if (conf.version !== version) {
+    conf.version = version;
+    fs.writeFileSync(tauriConfPath, JSON.stringify(conf, null, 2) + "\n");
+    console.log(`tauri.conf.json version synced to ${version}`);
+  }
+}
 
 function runTauriReleaseBuild() {
   run("npm", ["run", "tauri", "--", "build", "--bundles", nativeBundleTargets(platform).join(",")]);
