@@ -98,17 +98,28 @@ function runTauriReleaseBuild() {
 }
 
 function run(command, commandArgs, options = {}) {
+  const executable = commandForPlatform(command);
   const label = [command, ...commandArgs].join(" ");
   executed.push(label);
   console.log(`\n> ${label}`);
-  const result = spawnSync(command, commandArgs, {
+  const result = spawnSync(executable, commandArgs, {
     cwd: options.cwd ?? appRoot,
     stdio: "inherit",
     shell: false,
   });
+  if (result.error) {
+    fail(`${label} failed: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     fail(`${label} failed with exit ${result.status ?? "unknown"}.`);
   }
+}
+
+function commandForPlatform(command) {
+  if (process.platform === "win32" && command === "npm") {
+    return "npm.cmd";
+  }
+  return command;
 }
 
 function artifact(kind, target, includeChecksum) {

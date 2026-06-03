@@ -117,14 +117,25 @@ function writeReadme(openingLine) {
 }
 
 function run(command, commandArgs, options = {}) {
-  const result = spawnSync(command, commandArgs, {
+  const executable = commandForPlatform(command);
+  const result = spawnSync(executable, commandArgs, {
     cwd: options.cwd ?? appRoot,
     stdio: "inherit",
     shell: false,
   });
+  if (result.error) {
+    fail(`${command} ${commandArgs.join(" ")} failed: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     fail(`${command} ${commandArgs.join(" ")} failed with exit ${result.status ?? "unknown"}.`);
   }
+}
+
+function commandForPlatform(command) {
+  if (process.platform === "win32" && command === "npm") {
+    return "npm.cmd";
+  }
+  return command;
 }
 
 function assertExists(target, label) {
