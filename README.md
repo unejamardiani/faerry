@@ -77,11 +77,47 @@ Build:
 npm run build
 ```
 
+Run the full release process for the current platform:
+
+```bash
+npm run release
+```
+
 Create a portable package for the current platform:
 
 ```bash
 npm run package:portable
 ```
+
+## Release Process
+
+Faerry releases are built on each target operating system. The same command is
+used on macOS, Windows, and Linux:
+
+```bash
+npm run release
+```
+
+The release command runs:
+
+- `npm run check`
+- `cargo test --manifest-path src-tauri/Cargo.toml`
+- a Tauri release build for the current platform
+- `npm run package:portable -- --no-build`
+- a JSON release manifest with SHA-256 checksums
+
+Portable artifacts are written to:
+
+- macOS: `src-tauri/target/release/bundle/portable/faerry_<version>_macos-<arch>_portable.zip`
+- Windows: `src-tauri/target/release/bundle/portable/faerry_<version>_windows-<arch>_portable.zip`
+- Linux: `src-tauri/target/release/bundle/portable/faerry_<version>_linux-<arch>_portable.tar.gz`
+
+Each portable artifact also gets a `.sha256` sidecar file. Release manifests are
+written to `src-tauri/target/release/bundle/release/`.
+
+Use `npm run package:portable -- --no-build` only when a release binary has
+already been built and you want to rebuild the portable archive without running
+checks or compiling again.
 
 ## Bundled Scripts
 
