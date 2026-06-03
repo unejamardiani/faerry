@@ -163,21 +163,18 @@ jobs:
           {
             echo "# Faerry ${{ steps.release.outputs.tag }}"
             echo
-            echo "Install Faerry with the setup artifact for your platform, or download the portable package if you do not want an installed app."
+            echo "Download the installer or portable package for your platform."
             echo
             echo "## Assets"
             find release-assets -type f \
+              ! -name "*.sha256" ! -name "*_release.json" \
+              ! -name "*.sig" ! -name "*.app.tar.gz" \
               -not -path "*.AppDir/*" \
-              \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.app.tar.gz.sig" \
-                 -o -name "*.AppImage" -o -name "*.AppImage.sig" \
-                 -o -name "*.exe" -o -name "*.exe.sig" \
-                 -o -name "*_portable.*" -o -name "*.sha256" \
-                 -o -name "latest.json" -o -name "*_release.json" \) \
+              \( -name "*.dmg" -o -name "*.exe" -o -name "*.AppImage" \
+                 -o -name "*_portable.*" -o -name "latest.json" \) \
               | sort | while read -r file; do
               echo "- $(basename "${file}")"
             done
-            echo
-            echo "Portable packages include matching .sha256 checksum files. Installer update artifacts are signed for the in-app updater."
           } > release-notes.md
 
       - name: Publish release
@@ -190,12 +187,12 @@ jobs:
           PRERELEASE: ${{ inputs.prerelease || false }}
         run: |
           mapfile -t assets < <(find release-assets -type f \
+            ! -name "*.sha256" ! -name "*_release.json" \
             -not -path "*.AppDir/*" \
             \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.app.tar.gz.sig" \
                -o -name "*.AppImage" -o -name "*.AppImage.sig" \
                -o -name "*.exe" -o -name "*.exe.sig" \
-               -o -name "*_portable.*" -o -name "*.sha256" \
-               -o -name "latest.json" -o -name "*_release.json" \) \
+               -o -name "*_portable.*" -o -name "latest.json" \) \
             | sort)
 
           if [[ "${#assets[@]}" -eq 0 ]]; then
