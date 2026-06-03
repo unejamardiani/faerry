@@ -45,6 +45,16 @@ is valid. Legacy `sources.json` files are still read, but new UI edits write
 Generated source caches and aggregate skills live under `.agents-manager/` in
 the managed repo. That folder is runtime state and should not be committed.
 
+## Agent Workspace
+
+This repository is initialized for agent-assisted development:
+
+- `AGENTS.md` contains project-local instructions for coding agents.
+- `DESIGN.md` defines the Faerry visual design system.
+- `.agents/MEMORY.md` stores durable product and release decisions.
+- `.agents/README.md` explains how to use the local agent memory folder.
+- `faerry.json` keeps the workspace source configuration.
+
 ## Development
 
 Requirements:
@@ -118,6 +128,25 @@ written to `src-tauri/target/release/bundle/release/`.
 Use `npm run package:portable -- --no-build` only when a release binary has
 already been built and you want to rebuild the portable archive without running
 checks or compiling again.
+
+## GitHub Releases
+
+GitHub Actions builds downloadable release assets for macOS, Windows, and Linux
+through `.github/workflows/release.yml`.
+
+Create a normal public release by pushing a version tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow builds every platform, uploads the portable archives as workflow
+artifacts, then creates or updates the matching GitHub Release page. Users can
+download the app from that release page under "Assets".
+
+The workflow can also be started manually from the GitHub Actions UI. If no tag
+is provided, it uses the version from `package.json`, for example `v0.1.0`.
 
 ## Bundled Scripts
 

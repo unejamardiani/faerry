@@ -1,0 +1,186 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag. Defaults to package.json version, for example v0.1.0."
+        required: false
+        type: string
+      draft:
+        description: "Create the GitHub Release as a draft."
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: "Mark the GitHub Release as a prerelease."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            os: macos-latest
+            artifact-name: faerry-macos
+          - platform: windows
+            os: windows-latest
+            artifact-name: faerry-windows
+          - platform: linux
+            os: ubuntu-22.04
+            artifact-name: faerry-linux
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build release and portable package
+        run: npm run release
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            src-tauri/target/release/bundle/portable/*
+            src-tauri/target/release/bundle/release/*
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ -n "${INPUT_TAG}" ]]; then
+            tag="${INPUT_TAG}"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            version="$(node -p "require('./package.json').version")"
+            tag="v${version}"
+          fi
+
+          if [[ ! "${tag}" =~ ^v[0-9A-Za-z._-]+$ ]]; then
+            echo "Release tag must start with v and contain only letters, numbers, dots, underscores, or hyphens: ${tag}" >&2
+            exit 1
+          fi
+
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "title=Faerry ${tag#v}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          {
+            echo "# Faerry ${{ steps.release.outputs.tag }}"
+            echo
+            echo "Download the portable package for your platform from the assets below."
+            echo
+            echo "## Assets"
+            find release-assets -type f | sort | while read -r file; do
+              echo "- $(basename "${file}")"
+            done
+            echo
+            echo "Each portable package includes a matching .sha256 checksum file."
+          } > release-notes.md
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.release.outputs.title }}
+          DRAFT_RELEASE: ${{ inputs.draft || false }}
+          PRERELEASE: ${{ inputs.prerelease || false }}
+        run: |
+          mapfile -t assets < <(find release-assets -type f | sort)
+
+          if [[ "${#assets[@]}" -eq 0 ]]; then
+            echo "No release assets found." >&2
+            exit 1
+          fi
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "${assets[@]}" --clobber
+            gh release edit "${RELEASE_TAG}" --title "${RELEASE_TITLE}" --notes-file release-notes.md
+          else
+            create_args=()
+            if [[ "${DRAFT_RELEASE}" == "true" ]]; then
+              create_args+=(--draft)
+            fi
+            if [[ "${PRERELEASE}" == "true" ]]; then
+              create_args+=(--prerelease)
+            fi
+
+            gh release create "${RELEASE_TAG}" "${assets[@]}" \
+              --title "${RELEASE_TITLE}" \
+              --notes-file release-notes.md \
+              --target "${GITHUB_SHA}" \
+              "${create_args[@]}"
+          fi
