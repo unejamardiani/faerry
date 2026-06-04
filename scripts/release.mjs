@@ -40,7 +40,7 @@ if (!["darwin", "win32", "linux"].includes(platform)) {
   fail(`Release packaging is not implemented for ${platform}.`);
 }
 
-syncTauriConfVersion(packageJson.version);
+syncVersions(packageJson.version);
 
 if (!args.has("--skip-checks")) {
   run("npm", ["run", "check"]);
@@ -88,13 +88,23 @@ fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 console.log(`Release manifest created: ${manifestPath}`);
 console.log(`Portable checksum: ${portableChecksumPath}`);
 
-function syncTauriConfVersion(version) {
+function syncVersions(version) {
   const tauriConfPath = path.join(tauriDir, "tauri.conf.json");
   const conf = JSON.parse(fs.readFileSync(tauriConfPath, "utf8"));
   if (conf.version !== version) {
     conf.version = version;
     fs.writeFileSync(tauriConfPath, JSON.stringify(conf, null, 2) + "\n");
     console.log(`tauri.conf.json version synced to ${version}`);
+  }
+
+  const cargoTomlPath = path.join(tauriDir, "Cargo.toml");
+  const cargoToml = fs.readFileSync(cargoTomlPath, "utf8");
+  const cargoVersionRegex = /^version\s*=\s*"([^"]+)"\s*$/m;
+  const match = cargoToml.match(cargoVersionRegex);
+  if (match && match[1] !== version) {
+    const updated = cargoToml.replace(cargoVersionRegex, `version = "${version}"`);
+    fs.writeFileSync(cargoTomlPath, updated);
+    console.log(`Cargo.toml version synced to ${version}`);
   }
 }
 

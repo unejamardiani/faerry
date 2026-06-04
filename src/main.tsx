@@ -466,7 +466,6 @@ function App() {
       setScriptVersions(sv);
       setAgentsMdInfo(am);
       setSafetyWarnings(sw);
-      setUpdateResult(null);
     } catch (error) {
       setOutput(String(error));
       setMeta("Failed to load About info.");
@@ -481,7 +480,11 @@ function App() {
   async function checkForUpdates(options: { silent?: boolean } = {}) {
     if (!options.silent) setCheckingUpdate(true);
     try {
-      setUpdateResult(await invoke<UpdateCheckResult>("check_for_updates"));
+      const result = await invoke<UpdateCheckResult>("check_for_updates");
+      setUpdateResult(result);
+      if (options.silent && !result.upToDate && result.latestVersion) {
+        setMeta(`Faerry v${result.latestVersion} is available. Open Settings → Runtime and updates to install.`);
+      }
     } catch (error) {
       if (!options.silent) {
         setOutput(String(error));
@@ -494,9 +497,6 @@ function App() {
 
   async function installUpdate() {
     if (!updateResult?.canInstall) return;
-    const version = updateResult.latestVersion ? ` v${updateResult.latestVersion}` : "";
-    const confirmed = window.confirm(`Install Faerry${version}? The app may restart during installation.`);
-    if (!confirmed) return;
 
     setInstallingUpdate(true);
     try {
