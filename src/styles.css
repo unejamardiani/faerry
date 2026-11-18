@@ -708,6 +708,19 @@ th {
   padding: 12px 0 2px;
 }
 
+.pathPicker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.inlineError {
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 680;
+}
+
 .sourceToggleGrid label {
   display: inline-flex;
   align-items: center;
@@ -1391,6 +1404,10 @@ th {
   }
 
   .sourceEditorGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .pathPicker {
     grid-template-columns: 1fr;
   }
 

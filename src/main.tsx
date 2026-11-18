@@ -1209,6 +1209,8 @@ function SourceEditor({
 }) {
   const [form, setForm] = useState<SourceFormData>(initial);
   const [mode, setMode] = useState(initial.url ? "git" : "local");
+  const [pickingFolder, setPickingFolder] = useState(false);
+  const [folderError, setFolderError] = useState("");
 
   function update(next: Partial<SourceFormData>) {
     setForm((current) => ({ ...current, ...next }));
@@ -1222,11 +1224,29 @@ function SourceEditor({
     });
   }
 
+  async function chooseLocalFolder() {
+    setMode("local");
+    setFolderError("");
+    setPickingFolder(true);
+    try {
+      const selected = await invoke<string | null>("choose_source_folder");
+      if (selected) {
+        update({ path: selected });
+      }
+    } catch (error) {
+      setFolderError(String(error));
+    } finally {
+      setPickingFolder(false);
+    }
+  }
+
   return (
     <div className="sourceEditor">
       <div className="sourceMode">
-        <button className={mode === "local" ? "primaryButton" : "ghostButton"} onClick={() => setMode("local")}>Local folder</button>
-        <button className={mode === "git" ? "primaryButton" : "ghostButton"} onClick={() => setMode("git")}>Git repository</button>
+        <button className={mode === "local" ? "primaryButton" : "ghostButton"} onClick={chooseLocalFolder} disabled={pickingFolder}>
+          {pickingFolder ? "Choosing..." : "Local folder"}
+        </button>
+        <button className={mode === "git" ? "primaryButton" : "ghostButton"} onClick={() => setMode("git")} disabled={pickingFolder}>Git repository</button>
       </div>
       <div className="sourceEditorGrid">
         <Field label="Name">
@@ -1234,7 +1254,13 @@ function SourceEditor({
         </Field>
         {mode === "local" ? (
           <Field label="Folder path">
-            <input className="textInput" value={form.path} onChange={(event) => update({ path: event.target.value })} placeholder="../agents-adesso or ~/Code/team-agents" />
+            <div className="pathPicker">
+              <input className="textInput" value={form.path} onChange={(event) => update({ path: event.target.value })} placeholder="../agents-adesso or ~/Code/team-agents" />
+              <button className="smallButton" onClick={chooseLocalFolder} disabled={pickingFolder}>
+                {pickingFolder ? "..." : "Browse"}
+              </button>
+            </div>
+            {folderError && <div className="inlineError">{folderError}</div>}
           </Field>
         ) : (
           <Field label="Git URL">

@@ -72,6 +72,11 @@ fn choose_repo_path() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+fn choose_source_folder() -> Result<Option<String>, String> {
+    scripts::choose_source_folder()
+}
+
+#[tauri::command]
 fn prepare_workspace(repo_path: String) -> Result<CreateResult, String> {
     let root = Path::new(&repo_path);
     if !root.exists() {
@@ -869,6 +874,7 @@ pub fn run() {
             run_action,
             preview_action,
             choose_repo_path,
+            choose_source_folder,
             prepare_workspace,
             plan_repo_import,
             run_repo_import,

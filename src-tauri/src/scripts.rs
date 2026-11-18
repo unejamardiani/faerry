@@ -156,12 +156,20 @@ pub fn open_path(target: &str) -> Result<(), String> {
 }
 
 pub fn choose_repo_path() -> Result<Option<String>, String> {
+    choose_folder("Choose portable agents repo")
+}
+
+pub fn choose_source_folder() -> Result<Option<String>, String> {
+    choose_folder("Choose source folder")
+}
+
+fn choose_folder(prompt: &str) -> Result<Option<String>, String> {
     if cfg!(target_os = "macos") {
-        choose_repo_path_macos()
+        choose_folder_macos(prompt)
     } else if cfg!(windows) {
-        choose_repo_path_windows()
+        choose_folder_windows(prompt)
     } else {
-        choose_repo_path_linux()
+        choose_folder_linux(prompt)
     }
 }
 
@@ -634,11 +642,12 @@ fn extract_backups(output: &str) -> Vec<String> {
     backups.into_iter().collect()
 }
 
-fn choose_repo_path_macos() -> Result<Option<String>, String> {
+fn choose_folder_macos(prompt: &str) -> Result<Option<String>, String> {
+    let prompt = prompt.replace('\\', "\\\\").replace('"', "\\\"");
     let output = Command::new("osascript")
         .args([
             "-e",
-            r#"POSIX path of (choose folder with prompt "Choose portable agents repo")"#,
+            &format!(r#"POSIX path of (choose folder with prompt "{prompt}")"#),
         ])
         .output()
         .map_err(|error| error.to_string())?;
@@ -656,17 +665,19 @@ fn choose_repo_path_macos() -> Result<Option<String>, String> {
     ))
 }
 
-fn choose_repo_path_windows() -> Result<Option<String>, String> {
+fn choose_folder_windows(prompt: &str) -> Result<Option<String>, String> {
+    let prompt = prompt.replace('\'', "''");
     let script = r#"
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-$dialog.Description = 'Choose portable agents repo'
+$dialog.Description = '__PROMPT__'
 if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
   Write-Output $dialog.SelectedPath
 }
-"#;
+"#
+    .replace("__PROMPT__", &prompt);
     let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", script])
+        .args(["-NoProfile", "-Command", &script])
         .stdin(Stdio::null())
         .output()
         .map_err(|error| error.to_string())?;
@@ -683,17 +694,25 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
     }
 }
 
-fn choose_repo_path_linux() -> Result<Option<String>, String> {
+fn choose_folder_linux(prompt: &str) -> Result<Option<String>, String> {
     let candidates = [
         (
             "zenity",
             vec![
-                "--file-selection",
-                "--directory",
-                "--title=Choose portable agents repo",
+                "--file-selection".to_string(),
+                "--directory".to_string(),
+                format!("--title={prompt}"),
             ],
         ),
-        ("kdialog", vec!["--getexistingdirectory", "."]),
+        (
+            "kdialog",
+            vec![
+                "--getexistingdirectory".to_string(),
+                ".".to_string(),
+                "--title".to_string(),
+                prompt.to_string(),
+            ],
+        ),
     ];
 
     for (command, args) in candidates {
